@@ -1,0 +1,31 @@
+{
+  "name": "@sodp/react",
+  "version": "0.1.0",
+  "description": "React hooks for the State-Oriented Data Protocol",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": ["sodp", "realtime", "state-sync", "websocket", "react", "hooks"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/orkestri/SODP.git",
+    "directory": "react-sodp"
+  },
+  "homepage": "https://github.com/orkestri/SODP/tree/main/react-sodp#readme",
+  "bugs": { "url": "https://github.com/orkestri/SODP/issues" },
+  "publishConfig": { "access": "public" },
+  "peerDependencies": {
+    "@sodp/client": "^0.1.0",
+    "react": ">=17"
+  },
+  "devDependencies": {
+    "@sodp/client": "file:../client-ts",
+    "@types/react": "^18.0.0",
+    "react": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}
