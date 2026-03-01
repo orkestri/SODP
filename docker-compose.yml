@@ -1,0 +1,81 @@
+# ── SODP server — single-node / clustered setup ───────────────────────────────
+#
+# Quick start:
+#   cp .env.example .env        # edit JWT secret and any other settings
+#   docker compose up -d
+#
+# With Redis horizontal scaling:
+#   docker compose --profile cluster up -d
+#
+# Rebuild after local code changes:
+#   docker compose build && docker compose up -d
+#
+# Use a published image instead of building locally — uncomment the `image:`
+# line and comment out `build:` in the sodp service below.
+
+services:
+
+  # ── SODP server ─────────────────────────────────────────────────────────────
+  sodp:
+    build: .
+    # image: ghcr.io/orkestri/sodp-server:latest
+    restart: unless-stopped
+
+    ports:
+      - "${SODP_PORT:-7777}:7777"                      # WebSocket — expose to clients
+      - "127.0.0.1:${SODP_HEALTH_PORT:-7778}:7778"    # Health endpoint — keep internal
+      - "127.0.0.1:${SODP_METRICS_PORT:-9090}:9090"   # Prometheus metrics — keep internal
+
+    environment:
+      RUST_LOG:                   "${RUST_LOG:-info}"
+      SODP_JWT_SECRET:            "${SODP_JWT_SECRET:-}"
+      SODP_JWT_PUBLIC_KEY_FILE:   "${SODP_JWT_PUBLIC_KEY_FILE:-}"
+      SODP_ACL_FILE:              "${SODP_ACL_FILE:-}"
+      SODP_HEALTH_PORT:           "${SODP_HEALTH_PORT:-7778}"
+      SODP_METRICS_PORT:          "${SODP_METRICS_PORT:-9090}"
+      SODP_RATE_WRITES_PER_SEC:   "${SODP_RATE_WRITES_PER_SEC:-}"
+      SODP_RATE_WATCHES_PER_SEC:  "${SODP_RATE_WATCHES_PER_SEC:-}"
+      SODP_MAX_CONNECTIONS:       "${SODP_MAX_CONNECTIONS:-}"
+      SODP_MAX_FRAME_BYTES:       "${SODP_MAX_FRAME_BYTES:-}"
+      SODP_WS_PING_INTERVAL:      "${SODP_WS_PING_INTERVAL:-}"
+      SODP_REDIS_URL:             "${SODP_REDIS_URL:-}"
+
+    volumes:
+      - sodp-log:/var/lib/sodp/log   # persistent delta log (survives restarts)
+      - ./config:/etc/sodp:ro        # ACL rules, JWT public key, schema file
+
+    # Add /var/lib/sodp/log for persistence.
+    # Add /etc/sodp/schema.json as a third argument to enable schema validation.
+    command: ["sodp-server", "0.0.0.0:7777", "/var/lib/sodp/log"]
+
+    healthcheck:
+      # Requires SODP_HEALTH_PORT (default 7778) — hardcoded to match the default.
+      # If you change SODP_HEALTH_PORT, update the port here too.
+      test: ["CMD", "curl", "-sf", "http://localhost:7778/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    depends_on:
+      redis:
+        condition: service_healthy
+        required: false   # sodp starts regardless; Redis is optional
+
+  # ── Redis — enabled only with: docker compose --profile cluster up ───────────
+  redis:
+    image: redis:7-alpine
+    profiles: [cluster]
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  sodp-log:
+  redis-data:
