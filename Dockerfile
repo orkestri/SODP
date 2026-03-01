@@ -5,6 +5,13 @@ FROM rust:1.88-slim AS builder
 
 WORKDIR /app
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      pkg-config \
+      libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto/            proto/
 COPY sodp-middleware/  sodp-middleware/
@@ -16,7 +23,7 @@ RUN cargo build --release --bin sodp-server
 FROM debian:bookworm-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/sodp-server /usr/local/bin/
