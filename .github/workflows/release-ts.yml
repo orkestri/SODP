@@ -1,0 +1,53 @@
+name: Release — TypeScript (npm)
+
+on:
+  push:
+    tags:
+      - "ts/v*"
+
+jobs:
+  publish:
+    name: Publish @sodp/client and @sodp/react to npm
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#ts/}" >> "$GITHUB_OUTPUT"
+
+      # ── @sodp/client ──────────────────────────────────────────────────────
+      - name: Install @sodp/client deps
+        working-directory: client-ts
+        run: npm ci
+
+      - name: Build @sodp/client
+        working-directory: client-ts
+        run: npm run build
+
+      - name: Publish @sodp/client
+        working-directory: client-ts
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ── @sodp/react ───────────────────────────────────────────────────────
+      - name: Install @sodp/react deps
+        working-directory: react-sodp
+        run: npm ci
+
+      - name: Build @sodp/react
+        working-directory: react-sodp
+        run: npm run build
+
+      - name: Publish @sodp/react
+        working-directory: react-sodp
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

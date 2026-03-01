@@ -1,0 +1,67 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  integration:
+    name: Server + client integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build sodp-server (release)
+        run: cargo build --release --bin sodp-server
+
+      - name: Start server
+        run: ./target/release/sodp-server 0.0.0.0:7777 &
+
+      - name: Wait for server to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if nc -z localhost 7777 2>/dev/null; then
+              echo "Server is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not start within 30 seconds" >&2
+          exit 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client-ts/package-lock.json
+
+      - name: Install TypeScript client deps
+        working-directory: client-ts
+        run: npm ci
+
+      - name: Run TypeScript integration tests
+        working-directory: client-ts
+        run: node integration.mjs
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python client
+        working-directory: sodp-py
+        run: pip install -e .
+
+      - name: Run Python integration tests (if present)
+        working-directory: sodp-py
+        run: |
+          if [ -f integration.py ]; then
+            python integration.py
+          else
+            echo "No Python integration tests found — skipping"
+          fi
