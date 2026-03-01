@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.sodp</groupId>
+  <artifactId>sodp-client</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>SODP Java Client</name>
+  <description>
+    Framework-agnostic Java client for the State-Oriented Data Protocol.
+    Works with Spring Boot, Quarkus, Micronaut, or any Java 17+ project.
+  </description>
+  <url>https://github.com/orkestri/SODP</url>
+  <licenses>
+    <license>
+      <name>MIT</name>
+      <url>https://opensource.org/licenses/MIT</url>
+    </license>
+  </licenses>
+
+  <scm>
+    <connection>scm:git:git://github.com/orkestri/SODP.git</connection>
+    <developerConnection>scm:git:ssh://github.com/orkestri/SODP.git</developerConnection>
+    <url>https://github.com/orkestri/SODP</url>
+  </scm>
+
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/orkestri/SODP</url>
+    </repository>
+  </distributionManagement>
+
+  <properties>
+    <java.version>17</java.version>
+    <maven.compiler.source>${java.version}</maven.compiler.source>
+    <maven.compiler.target>${java.version}</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- MessagePack codec — zero transitive deps -->
+    <dependency>
+      <groupId>org.msgpack</groupId>
+      <artifactId>msgpack-core</artifactId>
+      <version>0.9.8</version>
+    </dependency>
+
+    <!-- Jackson — JSON value tree + type conversion (POJO ↔ JsonNode) -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.17.0</version>
+    </dependency>
+
+    <!-- Test -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <release>${java.version}</release>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>
