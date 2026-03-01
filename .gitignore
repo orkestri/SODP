@@ -1,0 +1,27 @@
+# Rust
+/target/
+
+# TypeScript
+client-ts/node_modules/
+client-ts/dist/
+react-sodp/node_modules/
+react-sodp/dist/
+
+# Python
+sodp-py/.venv/
+sodp-py/dist/
+sodp-py/src/*.egg-info/
+sodp-py/__pycache__/
+**/__pycache__/
+**/*.pyc
+
+# Java
+sodp-java/target/
+
+# Demo app (not published)
+/demo-collab/
+
+# IDE & tooling
+.idea/
+*.iml
+.claude/

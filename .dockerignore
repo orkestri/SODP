@@ -1,0 +1,11 @@
+target/
+client-ts/
+react-sodp/
+sodp-py/
+sodp-java/
+demo-collab/
+docs/
+.git/
+.idea/
+.claude/
+*.md
