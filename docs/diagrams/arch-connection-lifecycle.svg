@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 660" width="540" height="660" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#64748B"/>
+    </marker>
+    <marker id="arr-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#DC2626"/>
+    </marker>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="540" height="660" fill="#F8FAFC" rx="12"/>
+  <text x="270" y="30" text-anchor="middle" font-size="15" font-weight="700" fill="#0F172A">Connection Task Lifecycle</text>
+
+  <!-- Step 1: Accept -->
+  <rect x="130" y="46" width="280" height="44" rx="8" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="270" y="64" text-anchor="middle" font-size="12" font-weight="600" fill="#1D4ED8">TCP accept + WebSocket upgrade</text>
+  <text x="270" y="80" text-anchor="middle" font-size="10" fill="#3B82F6">accept_async() · set TCP_NODELAY · increment connection_count</text>
+
+  <line x1="270" y1="90" x2="270" y2="108" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 2: Auth -->
+  <rect x="100" y="110" width="340" height="80" rx="8" fill="#FEF3C7" stroke="#D97706" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="270" y="130" text-anchor="middle" font-size="12" font-weight="600" fill="#92400E">Auth handshake  (if SODP_JWT_SECRET set)</text>
+  <text x="270" y="148" text-anchor="middle" font-size="10" fill="#B45309">Send HELLO { auth: true }</text>
+  <text x="270" y="163" text-anchor="middle" font-size="10" fill="#B45309">Wait for AUTH frame → validate_jwt()</text>
+  <text x="270" y="178" text-anchor="middle" font-size="10" fill="#B45309">AUTH_OK → continue  |  Invalid → ERROR 401 + close</text>
+  <!-- Reject arm -->
+  <line x1="440" y1="150" x2="490" y2="150" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <rect x="490" y="136" width="36" height="28" rx="6" fill="#FEE2E2" stroke="#DC2626" stroke-width="1"/>
+  <text x="508" y="153" text-anchor="middle" font-size="10" font-weight="700" fill="#DC2626">×</text>
+
+  <line x1="270" y1="190" x2="270" y2="208" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 3: Session::new -->
+  <rect x="150" y="210" width="240" height="44" rx="8" fill="#D1FAE5" stroke="#059669" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="270" y="230" text-anchor="middle" font-size="12" font-weight="600" fill="#065F46">Session::new()</text>
+  <text x="270" y="246" text-anchor="middle" font-size="10" fill="#047857">rate limiters · watch map · presence list</text>
+
+  <line x1="270" y1="254" x2="270" y2="272" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 4: Event loop -->
+  <rect x="60" y="274" width="420" height="240" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="270" y="296" text-anchor="middle" font-size="12" font-weight="700" fill="#1D4ED8">Event loop  select! { … }</text>
+
+  <!-- Event loop items -->
+  <rect x="80" y="306" width="180" height="30" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1"/>
+  <text x="170" y="320" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">ws_rx.next()</text>
+  <text x="170" y="332" text-anchor="middle" font-size="10" fill="#3B82F6">incoming frames</text>
+
+  <rect x="280" y="306" width="180" height="30" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1"/>
+  <text x="370" y="320" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">rx.recv()</text>
+  <text x="370" y="332" text-anchor="middle" font-size="10" fill="#3B82F6">fanout DELTA from peers</text>
+
+  <!-- Frame types -->
+  <rect x="80" y="346" width="380" height="80" rx="6" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
+  <text x="100" y="362" font-size="10" fill="#475569">WATCH   → handle_watch()</text>
+  <text x="100" y="377" font-size="10" fill="#475569">RESUME  → handle_resume()</text>
+  <text x="100" y="392" font-size="10" fill="#475569">CALL    → handle_call()</text>
+  <text x="280" y="362" font-size="10" fill="#475569">UNWATCH → remove subscriber</text>
+  <text x="280" y="377" font-size="10" fill="#475569">ACK     → update last_seq</text>
+  <text x="280" y="392" font-size="10" fill="#475569">HEARTBEAT → echo back</text>
+
+  <!-- Timers -->
+  <rect x="80" y="436" width="180" height="30" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1"/>
+  <text x="170" y="450" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">jwt_expiry_timer</text>
+  <text x="170" y="462" text-anchor="middle" font-size="10" fill="#3B82F6">ERROR 401 on expiry</text>
+
+  <rect x="280" y="436" width="180" height="30" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1"/>
+  <text x="370" y="450" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">ws_ping_ticker</text>
+  <text x="370" y="462" text-anchor="middle" font-size="10" fill="#3B82F6">Ping · close on no Pong</text>
+
+  <line x1="270" y1="514" x2="270" y2="532" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Step 5: Cleanup -->
+  <rect x="80" y="534" width="380" height="80" rx="8" fill="#FEE2E2" stroke="#DC2626" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="270" y="556" text-anchor="middle" font-size="12" font-weight="700" fill="#991B1B">Session cleanup</text>
+  <text x="270" y="574" text-anchor="middle" font-size="10" fill="#B91C1C">fanout.remove_session()  →  cancel all WATCH subscriptions</text>
+  <text x="270" y="589" text-anchor="middle" font-size="10" fill="#B91C1C">presence cleanup  →  state.apply() + broadcast each removal</text>
+  <text x="270" y="604" text-anchor="middle" font-size="10" fill="#B91C1C">decrement connection_count</text>
+
+  <line x1="270" y1="614" x2="270" y2="632" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Terminal -->
+  <rect x="170" y="634" width="200" height="20" rx="10" fill="#475569"/>
+  <text x="270" y="648" text-anchor="middle" font-size="11" font-weight="600" fill="#FFFFFF">Connection closed</text>
+</svg>

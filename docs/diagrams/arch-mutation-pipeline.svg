@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 680" width="480" height="680" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#64748B"/>
+    </marker>
+    <marker id="arr-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#DC2626"/>
+    </marker>
+    <marker id="arr-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#059669"/>
+    </marker>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="480" height="680" fill="#F8FAFC" rx="12"/>
+  <text x="240" y="32" text-anchor="middle" font-size="15" font-weight="700" fill="#0F172A">Mutation Pipeline — state.set CALL</text>
+
+  <!-- CALL received -->
+  <rect x="140" y="50" width="200" height="50" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="70" text-anchor="middle" font-size="13" font-weight="600" fill="#5B21B6">CALL received</text>
+  <text x="240" y="87" text-anchor="middle" font-size="11" fill="#7C3AED">method: state.set</text>
+
+  <!-- Arrow -->
+  <line x1="240" y1="100" x2="240" y2="118" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Rate limit check -->
+  <rect x="130" y="120" width="220" height="46" rx="8" fill="#FEF3C7" stroke="#D97706" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="140" text-anchor="middle" font-size="12" font-weight="600" fill="#92400E">① Rate Limit Check</text>
+  <text x="240" y="156" text-anchor="middle" font-size="10" fill="#B45309">write_limiter.allow()</text>
+  <!-- reject arm -->
+  <line x1="350" y1="143" x2="400" y2="143" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <rect x="400" y="128" width="60" height="30" rx="6" fill="#FEE2E2" stroke="#DC2626" stroke-width="1"/>
+  <text x="430" y="145" text-anchor="middle" font-size="10" font-weight="600" fill="#DC2626">429</text>
+
+  <line x1="240" y1="166" x2="240" y2="184" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ACL check -->
+  <rect x="130" y="186" width="220" height="46" rx="8" fill="#FEF3C7" stroke="#D97706" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="206" text-anchor="middle" font-size="12" font-weight="600" fill="#92400E">② ACL Check</text>
+  <text x="240" y="222" text-anchor="middle" font-size="10" fill="#B45309">acl.can_write(sub, key)</text>
+  <line x1="350" y1="209" x2="400" y2="209" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <rect x="400" y="194" width="60" height="30" rx="6" fill="#FEE2E2" stroke="#DC2626" stroke-width="1"/>
+  <text x="430" y="211" text-anchor="middle" font-size="10" font-weight="600" fill="#DC2626">403</text>
+
+  <line x1="240" y1="232" x2="240" y2="250" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Schema validation -->
+  <rect x="130" y="252" width="220" height="46" rx="8" fill="#FEF3C7" stroke="#D97706" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="272" text-anchor="middle" font-size="12" font-weight="600" fill="#92400E">③ Schema Validation</text>
+  <text x="240" y="288" text-anchor="middle" font-size="10" fill="#B45309">schema.validate(key, value)</text>
+  <line x1="350" y1="275" x2="400" y2="275" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <rect x="400" y="260" width="60" height="30" rx="6" fill="#FEE2E2" stroke="#DC2626" stroke-width="1"/>
+  <text x="430" y="277" text-anchor="middle" font-size="10" font-weight="600" fill="#DC2626">422</text>
+
+  <line x1="240" y1="298" x2="240" y2="316" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+
+  <!-- state.apply -->
+  <rect x="110" y="318" width="260" height="60" rx="8" fill="#D1FAE5" stroke="#059669" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="340" text-anchor="middle" font-size="12" font-weight="600" fill="#065F46">④ state.apply(key, value)</text>
+  <text x="240" y="355" text-anchor="middle" font-size="10" fill="#047857">diff(old, new) → ops</text>
+  <text x="240" y="369" text-anchor="middle" font-size="10" fill="#047857">DeltaLog + SegmentedLog (if persistent)</text>
+
+  <line x1="240" y1="378" x2="240" y2="396" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+
+  <!-- encode_delta_body — ONCE badge -->
+  <rect x="110" y="398" width="260" height="48" rx="8" fill="#D1FAE5" stroke="#059669" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="230" y="418" text-anchor="middle" font-size="12" font-weight="600" fill="#065F46">⑤ encode_delta_body()</text>
+  <text x="230" y="434" text-anchor="middle" font-size="10" fill="#047857">body_mp: Vec&lt;u8&gt;   ← serialized once</text>
+  <rect x="356" y="402" width="40" height="18" rx="9" fill="#059669"/>
+  <text x="376" y="415" text-anchor="middle" font-size="9" font-weight="700" fill="#FFFFFF">ONCE</text>
+
+  <line x1="240" y1="446" x2="240" y2="464" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+
+  <!-- Fanout broadcast -->
+  <rect x="100" y="466" width="280" height="60" rx="8" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="487" text-anchor="middle" font-size="12" font-weight="600" fill="#1D4ED8">⑥ fanout.broadcast_encoded()</text>
+  <text x="240" y="503" text-anchor="middle" font-size="10" fill="#2563EB">deliver DELTA to all other watchers</text>
+  <text x="240" y="517" text-anchor="middle" font-size="10" fill="#2563EB">shard lock released before sends</text>
+
+  <!-- Fan arrows to sessions -->
+  <line x1="130" y1="526" x2="80"  y2="556" stroke="#2563EB" stroke-width="1" marker-end="url(#arr-green)"/>
+  <line x1="240" y1="526" x2="240" y2="556" stroke="#2563EB" stroke-width="1" marker-end="url(#arr-green)"/>
+  <line x1="350" y1="526" x2="400" y2="556" stroke="#2563EB" stroke-width="1" marker-end="url(#arr-green)"/>
+  <rect x="32"  y="557" width="96" height="28" rx="6" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <rect x="192" y="557" width="96" height="28" rx="6" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <rect x="352" y="557" width="96" height="28" rx="6" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <text x="80"  y="575" text-anchor="middle" font-size="10" fill="#1D4ED8">Session A</text>
+  <text x="240" y="575" text-anchor="middle" font-size="10" fill="#1D4ED8">Session B</text>
+  <text x="400" y="575" text-anchor="middle" font-size="10" fill="#1D4ED8">Session C</text>
+
+  <!-- RESULT -->
+  <line x1="240" y1="590" x2="240" y2="610" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <rect x="140" y="612" width="200" height="44" rx="8" fill="#D1FAE5" stroke="#059669" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="633" text-anchor="middle" font-size="12" font-weight="600" fill="#065F46">⑦ RESULT { version }</text>
+  <text x="240" y="649" text-anchor="middle" font-size="10" fill="#047857">returned to calling client</text>
+
+  <!-- Right side reject labels -->
+  <text x="415" y="173" font-size="9" fill="#DC2626" font-weight="600">REJECT</text>
+  <text x="415" y="240" font-size="9" fill="#DC2626" font-weight="600">REJECT</text>
+  <text x="415" y="305" font-size="9" fill="#DC2626" font-weight="600">REJECT</text>
+</svg>

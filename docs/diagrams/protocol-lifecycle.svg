@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 740" width="720" height="740" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <defs>
+    <marker id="arr-r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#2563EB"/>
+    </marker>
+    <marker id="arr-l" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="180">
+      <polygon points="0 0,8 3,0 6" fill="#059669"/>
+    </marker>
+    <marker id="arr-lr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#D97706"/>
+    </marker>
+    <marker id="arr-gray" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#64748B"/>
+    </marker>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#0F172A" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+
+  <rect width="720" height="740" fill="#F8FAFC" rx="12"/>
+  <text x="360" y="28" text-anchor="middle" font-size="15" font-weight="700" fill="#0F172A">SODP Protocol — Connection Lifecycle &amp; Frame Exchange</text>
+
+  <!-- Participant headers -->
+  <rect x="60" y="46" width="160" height="36" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="140" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#5B21B6">Client</text>
+
+  <rect x="500" y="46" width="160" height="36" rx="8" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="580" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#1D4ED8">Server</text>
+
+  <!-- Lifelines -->
+  <line x1="140" y1="82" x2="140" y2="720" stroke="#7C3AED" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <line x1="580" y1="82" x2="580" y2="720" stroke="#2563EB" stroke-width="1.5" stroke-dasharray="6,4"/>
+
+  <!-- ─── Phase 1: WebSocket handshake ─── -->
+  <rect x="60" y="98" width="600" height="22" rx="4" fill="#F1F5F9"/>
+  <text x="360" y="113" text-anchor="middle" font-size="11" font-weight="600" fill="#64748B">Phase 1 — TCP + WebSocket Upgrade</text>
+  <line x1="140" y1="128" x2="572" y2="128" stroke="#64748B" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arr-gray)"/>
+  <text x="360" y="123" text-anchor="middle" font-size="10" fill="#64748B">TCP connect + HTTP Upgrade (101 Switching Protocols)</text>
+
+  <!-- ─── Phase 2: HELLO ─── -->
+  <rect x="60" y="142" width="600" height="22" rx="4" fill="#F1F5F9"/>
+  <text x="360" y="157" text-anchor="middle" font-size="11" font-weight="600" fill="#64748B">Phase 2 — HELLO</text>
+  <!-- Server → Client -->
+  <line x1="572" y1="174" x2="148" y2="174" stroke="#059669" stroke-width="2" marker-end="url(#arr-l)"/>
+  <rect x="240" y="158" width="240" height="24" rx="4" fill="#ECFDF5" stroke="#059669" stroke-width="1"/>
+  <text x="360" y="169" text-anchor="middle" font-size="10" font-weight="600" fill="#065F46">HELLO  { version: "0.1", auth: true }</text>
+  <text x="360" y="179" text-anchor="middle" font-size="9" fill="#047857">0x01 · stream 0</text>
+
+  <!-- ─── Phase 3: AUTH ─── -->
+  <rect x="60" y="192" width="600" height="22" rx="4" fill="#F1F5F9"/>
+  <text x="360" y="207" text-anchor="middle" font-size="11" font-weight="600" fill="#64748B">Phase 3 — Authentication</text>
+  <!-- Client → Server -->
+  <line x1="148" y1="224" x2="572" y2="224" stroke="#2563EB" stroke-width="2" marker-end="url(#arr-r)"/>
+  <rect x="240" y="208" width="240" height="24" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <text x="360" y="219" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">AUTH  { token: "eyJ…" }</text>
+  <text x="360" y="229" text-anchor="middle" font-size="9" fill="#3B82F6">0x0B · stream 0</text>
+  <!-- Server → Client AUTH_OK -->
+  <line x1="572" y1="254" x2="148" y2="254" stroke="#059669" stroke-width="2" marker-end="url(#arr-l)"/>
+  <rect x="240" y="238" width="240" height="24" rx="4" fill="#ECFDF5" stroke="#059669" stroke-width="1"/>
+  <text x="360" y="249" text-anchor="middle" font-size="10" font-weight="600" fill="#065F46">AUTH_OK  { sub: "alice" }</text>
+  <text x="360" y="259" text-anchor="middle" font-size="9" fill="#047857">0x0C · stream 0</text>
+
+  <!-- ─── Phase 4: Live ─── -->
+  <rect x="60" y="272" width="600" height="22" rx="4" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1"/>
+  <text x="360" y="287" text-anchor="middle" font-size="11" font-weight="700" fill="#15803D">Phase 4 — Live Session</text>
+
+  <!-- WATCH -->
+  <line x1="148" y1="310" x2="572" y2="310" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arr-r)"/>
+  <rect x="210" y="294" width="300" height="22" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <text x="360" y="309" text-anchor="middle" font-size="10" fill="#1D4ED8">WATCH  { state: "game.player" }  · 0x02 · stream 10</text>
+
+  <!-- STATE_INIT -->
+  <line x1="572" y1="338" x2="148" y2="338" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-l)"/>
+  <rect x="160" y="322" width="380" height="22" rx="4" fill="#ECFDF5" stroke="#059669" stroke-width="1"/>
+  <text x="350" y="337" text-anchor="middle" font-size="10" fill="#065F46">STATE_INIT  { state: "game.player", version: 5, value: {…}, initialized: true }</text>
+  <text x="600" y="337" font-size="9" fill="#047857">0x03</text>
+
+  <!-- separator -->
+  <line x1="100" y1="356" x2="620" y2="356" stroke="#E2E8F0" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="360" y="370" text-anchor="middle" font-size="10" fill="#94A3B8">— another client writes game.player —</text>
+
+  <!-- DELTA (from server) -->
+  <line x1="572" y1="386" x2="148" y2="386" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-l)"/>
+  <rect x="160" y="370" width="340" height="22" rx="4" fill="#ECFDF5" stroke="#059669" stroke-width="1"/>
+  <text x="330" y="385" text-anchor="middle" font-size="10" fill="#065F46">DELTA  { version: 6, ops: [{op:"UPDATE", path:"/health", value:80}] }</text>
+  <text x="600" y="385" font-size="9" fill="#047857">0x04</text>
+
+  <!-- CALL (client writes) -->
+  <line x1="100" y1="402" x2="620" y2="402" stroke="#E2E8F0" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="360" y="416" text-anchor="middle" font-size="10" fill="#94A3B8">— this client writes —</text>
+  <line x1="148" y1="432" x2="572" y2="432" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arr-r)"/>
+  <rect x="120" y="416" width="420" height="22" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <text x="330" y="431" text-anchor="middle" font-size="10" fill="#1D4ED8">CALL  { call_id: "uuid", method: "state.set", args: { state: "game.player", value:{…} } }</text>
+  <text x="600" y="431" font-size="9" fill="#3B82F6">0x05</text>
+
+  <!-- RESULT -->
+  <line x1="572" y1="458" x2="148" y2="458" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-l)"/>
+  <rect x="230" y="442" width="280" height="22" rx="4" fill="#ECFDF5" stroke="#059669" stroke-width="1"/>
+  <text x="370" y="457" text-anchor="middle" font-size="10" fill="#065F46">RESULT  { call_id: "uuid", success: true, data: { version: 7 } }</text>
+  <text x="600" y="457" font-size="9" fill="#047857">0x06</text>
+
+  <!-- HEARTBEAT -->
+  <line x1="100" y1="474" x2="620" y2="474" stroke="#E2E8F0" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="360" y="488" text-anchor="middle" font-size="10" fill="#94A3B8">— every 25 s —</text>
+  <line x1="572" y1="502" x2="148" y2="502" stroke="#D97706" stroke-width="1.5" marker-end="url(#arr-l)"/>
+  <rect x="280" y="486" width="200" height="22" rx="4" fill="#FEF3C7" stroke="#D97706" stroke-width="1"/>
+  <text x="380" y="501" text-anchor="middle" font-size="10" fill="#92400E">HEARTBEAT  null · 0x09</text>
+  <line x1="148" y1="524" x2="572" y2="524" stroke="#D97706" stroke-width="1.5" marker-end="url(#arr-r)"/>
+  <rect x="280" y="508" width="200" height="22" rx="4" fill="#FEF3C7" stroke="#D97706" stroke-width="1"/>
+  <text x="380" y="523" text-anchor="middle" font-size="10" fill="#92400E">HEARTBEAT  null · 0x09 · echo</text>
+
+  <!-- ─── RESUME (reconnect) ─── -->
+  <rect x="60" y="544" width="600" height="22" rx="4" fill="#F1F5F9"/>
+  <text x="360" y="559" text-anchor="middle" font-size="11" font-weight="600" fill="#64748B">Reconnect + RESUME  (after disconnect)</text>
+
+  <!-- RESUME -->
+  <line x1="148" y1="578" x2="572" y2="578" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arr-r)"/>
+  <rect x="170" y="562" width="360" height="22" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <text x="350" y="577" text-anchor="middle" font-size="10" fill="#1D4ED8">RESUME  { state: "game.player", since_version: 7 }  · 0x0A</text>
+
+  <!-- Replayed DELTAs -->
+  <line x1="572" y1="602" x2="148" y2="602" stroke="#059669" stroke-width="1.5" stroke-dasharray="5,2" marker-end="url(#arr-l)"/>
+  <rect x="180" y="586" width="340" height="22" rx="4" fill="#ECFDF5" stroke="#059669" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="350" y="601" text-anchor="middle" font-size="10" fill="#065F46">DELTA  { version: 8, ops: […] }  ← replayed from DeltaLog</text>
+
+  <!-- STATE_INIT live marker -->
+  <line x1="572" y1="630" x2="148" y2="630" stroke="#059669" stroke-width="2" marker-end="url(#arr-l)"/>
+  <rect x="160" y="614" width="380" height="22" rx="4" fill="#ECFDF5" stroke="#059669" stroke-width="1.5"/>
+  <text x="350" y="629" text-anchor="middle" font-size="10" font-weight="600" fill="#065F46">STATE_INIT  { version: 9, value: {…} }  ← "you are now live" marker</text>
+  <text x="600" y="629" font-size="9" fill="#047857">0x03</text>
+
+  <!-- Legend -->
+  <line x1="60" y1="660" x2="95" y2="660" stroke="#2563EB" stroke-width="2" marker-end="url(#arr-r)"/>
+  <text x="100" y="664" font-size="10" fill="#64748B">Client → Server</text>
+  <line x1="220" y1="660" x2="255" y2="660" stroke="#059669" stroke-width="2" marker-end="url(#arr-r)"/>
+  <text x="260" y="664" font-size="10" fill="#64748B">Server → Client</text>
+  <line x1="380" y1="660" x2="415" y2="660" stroke="#D97706" stroke-width="2" marker-end="url(#arr-r)"/>
+  <text x="420" y="664" font-size="10" fill="#64748B">Bidirectional</text>
+  <line x1="520" y1="660" x2="555" y2="660" stroke="#059669" stroke-width="1.5" stroke-dasharray="5,2" marker-end="url(#arr-r)"/>
+  <text x="560" y="664" font-size="10" fill="#64748B">Replayed</text>
+
+  <!-- Final note -->
+  <text x="360" y="694" text-anchor="middle" font-size="10" fill="#94A3B8">HELLO { auth: false } → skip Phase 3 entirely; proceed directly to Phase 4</text>
+  <text x="360" y="710" text-anchor="middle" font-size="10" fill="#94A3B8">ERROR 401 → connection closed immediately; client should NOT reconnect</text>
+</svg>

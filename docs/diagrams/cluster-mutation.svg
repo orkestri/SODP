@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 480" width="760" height="480" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#64748B"/>
+    </marker>
+    <marker id="arr-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#DC2626"/>
+    </marker>
+    <marker id="arr-blue" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#2563EB"/>
+    </marker>
+    <marker id="arr-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#059669"/>
+    </marker>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="760" height="480" fill="#F8FAFC" rx="12"/>
+  <text x="380" y="30" text-anchor="middle" font-size="15" font-weight="700" fill="#0F172A">Cross-Node Mutation Path</text>
+
+  <!-- Writing client -->
+  <rect x="20" y="50" width="130" height="44" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="85" y="68" text-anchor="middle" font-size="12" font-weight="600" fill="#5B21B6">Client (writer)</text>
+  <text x="85" y="83" text-anchor="middle" font-size="10" fill="#7C3AED">state.set CALL</text>
+
+  <!-- Arrow to Node A -->
+  <line x1="150" y1="72" x2="185" y2="72" stroke="#7C3AED" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Node A box -->
+  <rect x="186" y="44" width="230" height="260" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="186" y="44" width="230" height="24" rx="10" fill="#2563EB"/>
+  <rect x="186" y="55" width="230" height="13" fill="#2563EB"/>
+  <text x="301" y="61" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">SODP Node A  (receives write)</text>
+
+  <!-- Steps in Node A -->
+  <rect x="200" y="78" width="202" height="24" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="301" y="94" text-anchor="middle" font-size="10" fill="#1D4ED8">① ACL · rate limit · schema checks</text>
+
+  <rect x="200" y="110" width="202" height="24" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="301" y="126" text-anchor="middle" font-size="10" fill="#1D4ED8">② state.apply()  →  (version, ops)</text>
+
+  <rect x="200" y="142" width="202" height="24" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="301" y="158" text-anchor="middle" font-size="10" fill="#1D4ED8">③ encode_delta_body()  →  body_mp</text>
+
+  <rect x="200" y="174" width="202" height="24" rx="5" fill="#D1FAE5" stroke="#059669" stroke-width="1"/>
+  <text x="301" y="190" text-anchor="middle" font-size="10" fill="#065F46">④ local fanout → clients on Node A</text>
+
+  <!-- Fire-and-forget badge -->
+  <rect x="200" y="206" width="202" height="40" rx="5" fill="#FEF3C7" stroke="#D97706" stroke-width="1.5"/>
+  <text x="301" y="220" text-anchor="middle" font-size="10" font-weight="600" fill="#92400E">⑤ cluster.sync()  — fire-and-forget</text>
+  <text x="301" y="234" text-anchor="middle" font-size="9" fill="#B45309">tokio::spawn { HSET + PUBLISH }</text>
+  <rect x="322" y="240" width="78" height="14" rx="7" fill="#D97706"/>
+  <text x="361" y="251" text-anchor="middle" font-size="8" font-weight="700" fill="#FFFFFF">non-blocking</text>
+
+  <rect x="200" y="256" width="202" height="24" rx="5" fill="#D1FAE5" stroke="#059669" stroke-width="1"/>
+  <text x="301" y="272" text-anchor="middle" font-size="10" fill="#065F46">⑥ RESULT { version } → caller</text>
+
+  <!-- Node A watchers -->
+  <rect x="20" y="170" width="100" height="30" rx="6" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <rect x="20" y="208" width="100" height="30" rx="6" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <text x="70" y="189" text-anchor="middle" font-size="10" fill="#1D4ED8">Watcher A1</text>
+  <text x="70" y="227" text-anchor="middle" font-size="10" fill="#1D4ED8">Watcher A2</text>
+  <line x1="186" y1="186" x2="120" y2="186" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <line x1="186" y1="222" x2="120" y2="222" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <text x="155" y="180" font-size="8" fill="#059669">DELTA</text>
+  <text x="155" y="217" font-size="8" fill="#059669">DELTA</text>
+
+  <!-- Arrow Node A → Redis (fire-and-forget) -->
+  <line x1="416" y1="226" x2="490" y2="120" stroke="#D97706" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arr)"/>
+  <text x="445" y="170" font-size="10" fill="#D97706" font-weight="600">HSET sodp:state</text>
+  <text x="445" y="183" font-size="10" fill="#D97706" font-weight="600">PUBLISH sodp:delta:key</text>
+
+  <!-- Redis box -->
+  <rect x="490" y="58" width="200" height="100" rx="8" fill="#FEE2E2" stroke="#DC2626" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="590" y="80" text-anchor="middle" font-size="12" font-weight="700" fill="#991B1B">Redis</text>
+  <text x="590" y="100" text-anchor="middle" font-size="11" fill="#B91C1C">sodp:state ← updated</text>
+  <text x="590" y="116" text-anchor="middle" font-size="11" fill="#B91C1C">sodp:delta:key ← published</text>
+  <text x="590" y="132" text-anchor="middle" font-size="10" fill="#DC2626">(node_id, body_mp)</text>
+  <text x="590" y="148" text-anchor="middle" font-size="10" fill="#94A3B8">Pub/Sub broadcast</text>
+
+  <!-- Arrow Redis → Node B subscriber -->
+  <line x1="590" y1="158" x2="590" y2="226" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <text x="596" y="198" font-size="10" fill="#DC2626">subscriber</text>
+  <text x="596" y="211" font-size="10" fill="#DC2626">message</text>
+
+  <!-- Node B box -->
+  <rect x="490" y="228" width="230" height="180" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="490" y="228" width="230" height="24" rx="10" fill="#2563EB"/>
+  <rect x="490" y="240" width="230" height="12" fill="#2563EB"/>
+  <text x="605" y="245" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">SODP Node B  (receives fanout)</text>
+
+  <rect x="506" y="262" width="198" height="24" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="605" y="278" text-anchor="middle" font-size="10" fill="#1D4ED8">run_subscriber_loop() receives msg</text>
+
+  <rect x="506" y="294" width="198" height="24" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="605" y="308" text-anchor="middle" font-size="10" fill="#1D4ED8">decode (sender_id, body_mp)</text>
+
+  <rect x="506" y="326" width="198" height="24" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="605" y="342" text-anchor="middle" font-size="10" fill="#1D4ED8">skip if sender_id == self.node_id</text>
+
+  <rect x="506" y="358" width="198" height="36" rx="5" fill="#D1FAE5" stroke="#059669" stroke-width="1"/>
+  <text x="605" y="374" text-anchor="middle" font-size="10" fill="#065F46">fanout.broadcast_encoded()</text>
+  <text x="605" y="388" text-anchor="middle" font-size="9" fill="#047857">no decode · no re-encode needed</text>
+
+  <!-- Node B watchers -->
+  <rect x="730" y="370" width="20" height="30" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <rect x="730" y="408" width="20" height="30" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1"/>
+  <line x1="720" y1="394" x2="750" y2="385" stroke="#059669" stroke-width="1" marker-end="url(#arr-green)"/>
+  <line x1="720" y1="394" x2="750" y2="423" stroke="#059669" stroke-width="1" marker-end="url(#arr-green)"/>
+  <text x="740" y="365" font-size="9" fill="#1D4ED8">B1</text>
+  <text x="740" y="408" font-size="9" fill="#1D4ED8">B2</text>
+  <text x="727" y="450" font-size="8" fill="#6B7280">watchers</text>
+  <text x="727" y="460" font-size="8" fill="#6B7280">on Node B</text>
+
+  <!-- Timing note -->
+  <rect x="20" y="420" width="440" height="44" rx="6" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1"/>
+  <text x="30" y="438" font-size="11" font-weight="600" fill="#15803D">Zero extra latency to the writing client</text>
+  <text x="30" y="454" font-size="10" fill="#166534">cluster.sync() returns immediately — background task handles Redis I/O after RESULT is sent</text>
+</svg>

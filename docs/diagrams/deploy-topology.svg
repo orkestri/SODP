@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 400" width="720" height="400" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#64748B"/>
+    </marker>
+    <marker id="arr-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#059669"/>
+    </marker>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0F172A" flood-opacity="0.09"/>
+    </filter>
+  </defs>
+
+  <rect width="720" height="400" fill="#F8FAFC" rx="12"/>
+  <text x="360" y="30" text-anchor="middle" font-size="15" font-weight="700" fill="#0F172A">Production Deployment Topology</text>
+
+  <!-- Internet clients -->
+  <rect x="20" y="60" width="110" height="44" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="75" y="78" text-anchor="middle" font-size="12" font-weight="600" fill="#5B21B6">Browsers</text>
+  <text x="75" y="93" text-anchor="middle" font-size="10" fill="#7C3AED">wss:// clients</text>
+
+  <rect x="20" y="116" width="110" height="44" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="75" y="134" text-anchor="middle" font-size="12" font-weight="600" fill="#5B21B6">Mobile</text>
+  <text x="75" y="149" text-anchor="middle" font-size="10" fill="#7C3AED">apps &amp; SDKs</text>
+
+  <!-- Arrows to proxy -->
+  <line x1="130" y1="82" x2="196" y2="110" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="130" y1="138" x2="196" y2="138" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="155" y="105" font-size="9" fill="#64748B">TLS :443</text>
+
+  <!-- Reverse proxy -->
+  <rect x="198" y="80" width="180" height="120" rx="10" fill="#FEF3C7" stroke="#D97706" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="198" y="80" width="180" height="26" rx="10" fill="#D97706"/>
+  <rect x="198" y="93" width="180" height="13" fill="#D97706"/>
+  <text x="288" y="98" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">Reverse Proxy</text>
+  <text x="288" y="123" text-anchor="middle" font-size="12" font-weight="600" fill="#92400E">nginx / Caddy</text>
+  <text x="288" y="141" text-anchor="middle" font-size="11" fill="#B45309">TLS termination</text>
+  <text x="288" y="157" text-anchor="middle" font-size="11" fill="#B45309">ws:// upgrade headers</text>
+  <text x="288" y="173" text-anchor="middle" font-size="11" fill="#B45309">WebSocket keep-alive</text>
+  <text x="288" y="189" text-anchor="middle" font-size="10" fill="#B45309">cert: Let's Encrypt / ACME</text>
+
+  <!-- Arrow proxy → SODP -->
+  <line x1="378" y1="138" x2="436" y2="138" stroke="#64748B" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="400" y="130" font-size="9" fill="#64748B">ws:// :7777</text>
+
+  <!-- SODP server -->
+  <rect x="438" y="60" width="200" height="200" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="438" y="60" width="200" height="26" rx="10" fill="#2563EB"/>
+  <rect x="438" y="73" width="200" height="13" fill="#2563EB"/>
+  <text x="538" y="78" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">SODP Server</text>
+  <text x="538" y="104" text-anchor="middle" font-size="12" font-weight="600" fill="#1D4ED8">sodp-server</text>
+  <text x="538" y="122" text-anchor="middle" font-size="11" fill="#2563EB">WebSocket :7777</text>
+
+  <!-- Port indicators inside SODP -->
+  <rect x="456" y="140" width="164" height="28" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="538" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">SODP_HEALTH_PORT :7778</text>
+  <text x="538" y="163" text-anchor="middle" font-size="9" fill="#3B82F6">GET / → 200 {status,connections}</text>
+
+  <rect x="456" y="176" width="164" height="28" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="538" y="188" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">SODP_METRICS_PORT :9090</text>
+  <text x="538" y="199" text-anchor="middle" font-size="9" fill="#3B82F6">Prometheus /metrics</text>
+
+  <rect x="456" y="212" width="164" height="36" rx="5" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="538" y="226" text-anchor="middle" font-size="10" fill="#1D4ED8">JWT auth · ACL · schema</text>
+  <text x="538" y="240" text-anchor="middle" font-size="10" fill="#1D4ED8">rate limiting · presence</text>
+
+  <!-- Optional Redis -->
+  <rect x="438" y="280" width="200" height="72" rx="8" fill="#FEE2E2" stroke="#DC2626" stroke-width="1.5" stroke-dasharray="6,3" filter="url(#shadow)"/>
+  <text x="538" y="302" text-anchor="middle" font-size="12" font-weight="600" fill="#991B1B">Redis  (optional)</text>
+  <text x="538" y="320" text-anchor="middle" font-size="11" fill="#B91C1C">horizontal scaling</text>
+  <text x="538" y="337" text-anchor="middle" font-size="10" fill="#DC2626">SODP_REDIS_URL=redis://...</text>
+  <text x="538" y="352" text-anchor="middle" font-size="9" fill="#94A3B8">omit for single-node mode</text>
+  <line x1="538" y1="260" x2="538" y2="278" stroke="#9CA3AF" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arr)"/>
+
+  <!-- Side arrows for health + metrics (from SODP outward) -->
+  <line x1="638" y1="154" x2="690" y2="154" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <line x1="638" y1="190" x2="690" y2="190" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <rect x="692" y="138" width="24" height="24" rx="4" fill="#D1FAE5" stroke="#059669" stroke-width="1"/>
+  <rect x="692" y="174" width="24" height="24" rx="4" fill="#D1FAE5" stroke="#059669" stroke-width="1"/>
+  <text x="704" y="153" text-anchor="middle" font-size="8" fill="#065F46">LB</text>
+  <text x="704" y="189" text-anchor="middle" font-size="8" fill="#065F46">APM</text>
+
+  <!-- Note at bottom -->
+  <rect x="20" y="368" width="480" height="22" rx="6" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1"/>
+  <text x="30" y="383" font-size="10" fill="#166534">Ports :7778 and :9090 are internal — never expose them publicly. Route :443 WebSocket traffic only.</text>
+
+  <!-- Systemd / Docker badge -->
+  <rect x="520" y="368" width="180" height="22" rx="6" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="610" y="383" text-anchor="middle" font-size="10" fill="#1D4ED8">Managed by systemd or Docker</text>
+</svg>

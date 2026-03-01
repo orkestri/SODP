@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" width="760" height="460" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#64748B"/>
+    </marker>
+    <marker id="arr-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#DC2626"/>
+    </marker>
+    <marker id="arr-blue" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#2563EB"/>
+    </marker>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="760" height="460" fill="#F8FAFC" rx="12"/>
+  <text x="380" y="30" text-anchor="middle" font-size="15" font-weight="700" fill="#0F172A">SODP Horizontal Scaling — Redis Cluster Overview</text>
+
+  <!-- ── Redis (center top) ── -->
+  <rect x="250" y="50" width="260" height="110" rx="10" fill="#FEE2E2" stroke="#DC2626" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="250" y="50" width="260" height="28" rx="10" fill="#DC2626"/>
+  <rect x="250" y="65" width="260" height="13" fill="#DC2626"/>
+  <text x="380" y="69" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">Redis</text>
+  <text x="380" y="100" text-anchor="middle" font-size="12" font-weight="600" fill="#991B1B">sodp:state</text>
+  <text x="380" y="116" text-anchor="middle" font-size="11" fill="#B91C1C">Hash — shared authoritative state</text>
+  <text x="380" y="134" text-anchor="middle" font-size="11" fill="#B91C1C">HSET / HDEL / HGETALL</text>
+  <rect x="268" y="145" width="224" height="16" rx="8" fill="#FCA5A5" stroke="#DC2626" stroke-width="1"/>
+  <text x="380" y="157" text-anchor="middle" font-size="10" fill="#7F1D1D">sodp:delta:* (Pub/Sub channels)</text>
+
+  <!-- ── SODP Node A ── -->
+  <rect x="30" y="220" width="300" height="160" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="30" y="220" width="300" height="26" rx="10" fill="#2563EB"/>
+  <rect x="30" y="234" width="300" height="12" fill="#2563EB"/>
+  <text x="180" y="237" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">SODP Node A</text>
+  <text x="180" y="263" text-anchor="middle" font-size="11" fill="#1D4ED8">StateStore  (in-memory, DashMap)</text>
+  <text x="180" y="280" text-anchor="middle" font-size="11" fill="#1D4ED8">FanoutBus  (local subscribers)</text>
+  <text x="180" y="297" text-anchor="middle" font-size="11" fill="#1D4ED8">RedisCluster  (sync + subscribe)</text>
+  <rect x="50" y="310" width="260" height="28" rx="6" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="180" y="322" text-anchor="middle" font-size="10" fill="#2563EB">MultiplexedConn (HSET/PUBLISH)</text>
+  <text x="180" y="334" text-anchor="middle" font-size="10" fill="#2563EB">Dedicated PubSub conn (PSUBSCRIBE)</text>
+  <text x="180" y="362" text-anchor="middle" font-size="10" fill="#6B7280">session_id: UUID  (dedup own publishes)</text>
+
+  <!-- ── SODP Node B ── -->
+  <rect x="430" y="220" width="300" height="160" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="430" y="220" width="300" height="26" rx="10" fill="#2563EB"/>
+  <rect x="430" y="234" width="300" height="12" fill="#2563EB"/>
+  <text x="580" y="237" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">SODP Node B</text>
+  <text x="580" y="263" text-anchor="middle" font-size="11" fill="#1D4ED8">StateStore  (in-memory, DashMap)</text>
+  <text x="580" y="280" text-anchor="middle" font-size="11" fill="#1D4ED8">FanoutBus  (local subscribers)</text>
+  <text x="580" y="297" text-anchor="middle" font-size="11" fill="#1D4ED8">RedisCluster  (sync + subscribe)</text>
+  <rect x="450" y="310" width="260" height="28" rx="6" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+  <text x="580" y="322" text-anchor="middle" font-size="10" fill="#2563EB">MultiplexedConn (HSET/PUBLISH)</text>
+  <text x="580" y="334" text-anchor="middle" font-size="10" fill="#2563EB">Dedicated PubSub conn (PSUBSCRIBE)</text>
+  <text x="580" y="362" text-anchor="middle" font-size="10" fill="#6B7280">session_id: UUID  (dedup own publishes)</text>
+
+  <!-- Arrows Node A ↔ Redis -->
+  <line x1="180" y1="220" x2="295" y2="170" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <text x="215" y="192" font-size="10" fill="#DC2626">HSET · PUBLISH</text>
+  <line x1="300" y1="158" x2="185" y2="210" stroke="#DC2626" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-red)"/>
+  <text x="218" y="208" font-size="10" fill="#DC2626">PSUBSCRIBE</text>
+
+  <!-- Arrows Node B ↔ Redis -->
+  <line x1="580" y1="220" x2="465" y2="170" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <text x="505" y="192" font-size="10" fill="#DC2626">HSET · PUBLISH</text>
+  <line x1="458" y1="158" x2="575" y2="210" stroke="#DC2626" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-red)"/>
+  <text x="480" y="210" font-size="10" fill="#DC2626">PSUBSCRIBE</text>
+
+  <!-- Clients under Node A -->
+  <rect x="50" y="398" width="80" height="36" rx="6" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+  <rect x="145" y="398" width="80" height="36" rx="6" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+  <rect x="240" y="398" width="80" height="36" rx="6" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+  <text x="90" y="420" text-anchor="middle" font-size="10" font-weight="600" fill="#5B21B6">Client 1</text>
+  <text x="185" y="420" text-anchor="middle" font-size="10" font-weight="600" fill="#5B21B6">Client 2</text>
+  <text x="280" y="420" text-anchor="middle" font-size="10" font-weight="600" fill="#5B21B6">Client 3</text>
+  <line x1="90"  y1="398" x2="115" y2="382" stroke="#7C3AED" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="185" y1="398" x2="185" y2="382" stroke="#7C3AED" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="280" y1="398" x2="250" y2="382" stroke="#7C3AED" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Clients under Node B -->
+  <rect x="450" y="398" width="80" height="36" rx="6" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+  <rect x="545" y="398" width="80" height="36" rx="6" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+  <rect x="640" y="398" width="80" height="36" rx="6" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+  <text x="490" y="420" text-anchor="middle" font-size="10" font-weight="600" fill="#5B21B6">Client 4</text>
+  <text x="585" y="420" text-anchor="middle" font-size="10" font-weight="600" fill="#5B21B6">Client 5</text>
+  <text x="680" y="420" text-anchor="middle" font-size="10" font-weight="600" fill="#5B21B6">Client 6</text>
+  <line x1="490" y1="398" x2="513" y2="382" stroke="#7C3AED" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="585" y1="398" x2="575" y2="382" stroke="#7C3AED" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="680" y1="398" x2="650" y2="382" stroke="#7C3AED" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- WebSocket labels -->
+  <text x="180" y="393" text-anchor="middle" font-size="9" fill="#64748B">WebSocket</text>
+  <text x="580" y="393" text-anchor="middle" font-size="9" fill="#64748B">WebSocket</text>
+
+  <!-- Legend -->
+  <line x1="30" y1="450" x2="55" y2="450" stroke="#DC2626" stroke-width="1.5" marker-end="url(#arr-red)"/>
+  <text x="60" y="454" font-size="10" fill="#64748B">Redis command / Pub/Sub</text>
+  <line x1="200" y1="450" x2="225" y2="450" stroke="#DC2626" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-red)"/>
+  <text x="230" y="454" font-size="10" fill="#64748B">Subscribe (PSUBSCRIBE)</text>
+  <line x1="380" y1="450" x2="405" y2="450" stroke="#7C3AED" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="410" y="454" font-size="10" fill="#64748B">WebSocket connection</text>
+</svg>

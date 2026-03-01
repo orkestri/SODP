@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 240" width="760" height="240" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="760" height="240" fill="#F8FAFC" rx="12"/>
+  <text x="380" y="28" text-anchor="middle" font-size="15" font-weight="700" fill="#0F172A">Tutorial Progression — Build to Production</text>
+
+  <!-- Connector line through all steps -->
+  <line x1="50" y1="120" x2="710" y2="120" stroke="#CBD5E1" stroke-width="2"/>
+
+  <!-- Steps -->
+  <!-- Step 1 -->
+  <circle cx="50" cy="120" r="18" fill="#2563EB" filter="url(#shadow)"/>
+  <text x="50" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">1</text>
+  <text x="50" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">Build</text>
+  <text x="50" y="165" text-anchor="middle" font-size="9" fill="#64748B">&amp; Run</text>
+
+  <!-- Step 2 -->
+  <circle cx="122" cy="120" r="18" fill="#2563EB" filter="url(#shadow)"/>
+  <text x="122" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">2</text>
+  <text x="122" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">First</text>
+  <text x="122" y="165" text-anchor="middle" font-size="9" fill="#64748B">Client</text>
+
+  <!-- Step 3 -->
+  <circle cx="194" cy="120" r="18" fill="#0369A1" filter="url(#shadow)"/>
+  <text x="194" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">3</text>
+  <text x="194" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#0369A1">Persist-</text>
+  <text x="194" y="165" text-anchor="middle" font-size="9" fill="#64748B">ence</text>
+
+  <!-- Step 4 -->
+  <circle cx="266" cy="120" r="18" fill="#0369A1" filter="url(#shadow)"/>
+  <text x="266" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">4</text>
+  <text x="266" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#0369A1">Schema</text>
+  <text x="266" y="165" text-anchor="middle" font-size="9" fill="#64748B">Validation</text>
+
+  <!-- Step 5 -->
+  <circle cx="338" cy="120" r="18" fill="#7C3AED" filter="url(#shadow)"/>
+  <text x="338" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">5</text>
+  <text x="338" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#7C3AED">JWT</text>
+  <text x="338" y="165" text-anchor="middle" font-size="9" fill="#64748B">Auth</text>
+
+  <!-- Step 6 -->
+  <circle cx="410" cy="120" r="18" fill="#7C3AED" filter="url(#shadow)"/>
+  <text x="410" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">6</text>
+  <text x="410" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#7C3AED">Access</text>
+  <text x="410" y="165" text-anchor="middle" font-size="9" fill="#64748B">Control</text>
+
+  <!-- Step 7 -->
+  <circle cx="482" cy="120" r="18" fill="#D97706" filter="url(#shadow)"/>
+  <text x="482" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">7</text>
+  <text x="482" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#D97706">Rate</text>
+  <text x="482" y="165" text-anchor="middle" font-size="9" fill="#64748B">Limiting</text>
+
+  <!-- Step 8 -->
+  <circle cx="554" cy="120" r="18" fill="#D97706" filter="url(#shadow)"/>
+  <text x="554" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">8</text>
+  <text x="554" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#D97706">Presence</text>
+  <text x="554" y="165" text-anchor="middle" font-size="9" fill="#64748B">Cursors</text>
+
+  <!-- Step 9 -->
+  <circle cx="626" cy="120" r="18" fill="#059669" filter="url(#shadow)"/>
+  <text x="626" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">9</text>
+  <text x="626" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="#059669">Health</text>
+  <text x="626" y="165" text-anchor="middle" font-size="9" fill="#64748B">&amp; Metrics</text>
+
+  <!-- Step 10 -->
+  <circle cx="710" cy="120" r="22" fill="#065F46" filter="url(#shadow)"/>
+  <text x="710" y="125" text-anchor="middle" font-size="11" font-weight="700" fill="#FFFFFF">10</text>
+  <text x="710" y="152" text-anchor="middle" font-size="10" font-weight="700" fill="#065F46">Full</text>
+  <text x="710" y="165" text-anchor="middle" font-size="9" fill="#64748B">Production</text>
+
+  <!-- Phase labels at top -->
+  <rect x="26" y="68" width="168" height="24" rx="12" fill="#DBEAFE" stroke="#2563EB" stroke-width="1"/>
+  <text x="110" y="84" text-anchor="middle" font-size="10" font-weight="600" fill="#1D4ED8">Getting Started</text>
+
+  <rect x="206" y="68" width="120" height="24" rx="12" fill="#E0E7FF" stroke="#4F46E5" stroke-width="1"/>
+  <text x="266" y="84" text-anchor="middle" font-size="10" font-weight="600" fill="#4338CA">Data Integrity</text>
+
+  <rect x="314" y="68" width="144" height="24" rx="12" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1"/>
+  <text x="386" y="84" text-anchor="middle" font-size="10" font-weight="600" fill="#6D28D9">Security</text>
+
+  <rect x="462" y="68" width="132" height="24" rx="12" fill="#FEF3C7" stroke="#D97706" stroke-width="1"/>
+  <text x="528" y="84" text-anchor="middle" font-size="10" font-weight="600" fill="#92400E">Resilience</text>
+
+  <rect x="608" y="68" width="120" height="24" rx="12" fill="#D1FAE5" stroke="#059669" stroke-width="1"/>
+  <text x="668" y="84" text-anchor="middle" font-size="10" font-weight="600" fill="#065F46">Operations</text>
+
+  <!-- Feature callouts below -->
+  <text x="380" y="192" text-anchor="middle" font-size="11" fill="#64748B">Each part builds on the previous — stop at any level of complexity</text>
+  <text x="86"  y="210" text-anchor="middle" font-size="10" fill="#2563EB">TS · Python · Java</text>
+  <text x="194" y="210" text-anchor="middle" font-size="10" fill="#0369A1">SegmentedLog</text>
+  <text x="302" y="210" text-anchor="middle" font-size="10" fill="#4338CA">SDL JSON</text>
+  <text x="410" y="210" text-anchor="middle" font-size="10" fill="#6D28D9">HS256 · RS256</text>
+  <text x="528" y="210" text-anchor="middle" font-size="10" fill="#92400E">1-sec window</text>
+  <text x="668" y="210" text-anchor="middle" font-size="10" fill="#065F46">Prometheus · systemd</text>
+</svg>
