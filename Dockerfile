@@ -1,7 +1,7 @@
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 # protoc-bin-vendored bundles precompiled protoc for all targets;
 # no system protobuf-compiler needed.
-FROM rust:1.85-slim AS builder
+FROM rust:1.88-slim AS builder
 
 WORKDIR /app
 
