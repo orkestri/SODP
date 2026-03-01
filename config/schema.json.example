@@ -1,0 +1,24 @@
+{
+  "game.player": {
+    "type": "Object",
+    "fields": {
+      "name":   { "type": "String" },
+      "health": { "type": "Int" },
+      "position": {
+        "type": "Object",
+        "fields": {
+          "x": { "type": "Float" },
+          "y": { "type": "Float" }
+        }
+      }
+    }
+  },
+  "app.settings": {
+    "type": "Object",
+    "nullable": true,
+    "fields": {
+      "theme":    { "type": "String" },
+      "language": { "type": "String" }
+    }
+  }
+}
