@@ -1,0 +1,29 @@
+syntax = "proto3";
+package bench;
+
+service StateService {
+    // Set (replace) a state entry. Server broadcasts to all watchers.
+    rpc SetState(SetStateRequest) returns (SetStateResponse);
+    // Open a server-streaming subscription. Server pushes updates as they arrive.
+    rpc WatchState(WatchRequest) returns (stream StateEvent);
+}
+
+message SetStateRequest {
+    string key   = 1;
+    bytes  value = 2;  // JSON-encoded state value
+}
+
+message SetStateResponse {
+    uint64 version = 1;
+}
+
+message WatchRequest {
+    string key = 1;
+}
+
+// Full-state push on every mutation (no delta — this is the comparison point).
+message StateEvent {
+    string key     = 1;
+    uint64 version = 2;
+    bytes  value   = 3;  // JSON-encoded full state value
+}
