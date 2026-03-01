@@ -1,0 +1,17 @@
+[
+  {
+    "state":  "game.*",
+    "read":   "*",
+    "write":  "{sub}"
+  },
+  {
+    "state":  "admin.*",
+    "read":   "roles:admin",
+    "write":  "roles:admin"
+  },
+  {
+    "state":  "presence.*",
+    "read":   "*",
+    "write":  "{sub}"
+  }
+]
