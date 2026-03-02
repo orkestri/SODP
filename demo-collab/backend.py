@@ -16,10 +16,11 @@ import os, time, uuid
 import jwt
 from flask import Flask, jsonify, request, send_from_directory
 
-JWT_SECRET = "demo-secret"   # must match SODP_JWT_SECRET env var
-JWT_TTL    = 3600            # 1-hour tokens
-PORT       = 8084
-STATIC     = os.path.join(os.path.dirname(__file__), "static")
+JWT_SECRET  = os.environ.get("JWT_SECRET", "demo-secret")  # must match SODP_JWT_SECRET
+SODP_WS_URL = os.environ.get("SODP_WS_URL", "ws://localhost:7777")
+JWT_TTL     = 3600            # 1-hour tokens
+PORT        = int(os.environ.get("PORT", "8084"))
+STATIC      = os.path.join(os.path.dirname(__file__), "static")
 
 app = Flask(__name__)
 
@@ -39,7 +40,9 @@ def get_token():
 
 @app.route("/")
 def index():
-    return send_from_directory(STATIC, "index.html")
+    with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as f:
+        html = f.read().replace("__SODP_WS_URL__", SODP_WS_URL)
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 if __name__ == "__main__":
