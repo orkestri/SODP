@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collab Editor · SODP Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Login ── */
+    #login {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px;
+    }
+    #login h1 { font-size: 2rem; color: #a29bfe; letter-spacing: -0.5px; }
+    #login p  { color: #8b949e; font-size: 0.9rem; }
+    #login input, #login button {
+      width: 280px; padding: 11px 16px; font-size: 1rem;
+      border-radius: 8px; border: 1px solid #30363d; outline: none;
+    }
+    #login input  { background: #161b22; color: #c9d1d9; }
+    #login input:focus { border-color: #6c5ce7; }
+    #login button {
+      background: #6c5ce7; color: #fff; cursor: pointer;
+      font-weight: 600; border-color: transparent; transition: background 0.15s;
+    }
+    #login button:hover    { background: #a29bfe; }
+    #login button:disabled { background: #444; cursor: default; }
+
+    /* ── App ── */
+    #app { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+
+    header {
+      background: #161b22; border-bottom: 1px solid #21262d;
+      padding: 10px 18px; display: flex; align-items: center; gap: 12px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1rem; color: #a29bfe; font-weight: 700; }
+    #myBadge  { font-size: 0.85rem; }
+    #conn {
+      margin-left: auto; display: flex; align-items: center;
+      gap: 6px; font-size: 0.78rem; color: #8b949e;
+    }
+    #connDot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #e74c3c; transition: background 0.3s;
+    }
+    #connDot.on { background: #2ecc71; }
+
+    /* ── Layout ── */
+    .layout { flex: 1; display: flex; overflow: hidden; }
+
+    /* ── Editor ── */
+    #editorWrap {
+      flex: 1; display: flex; flex-direction: column;
+      padding: 14px; position: relative;
+    }
+    #doc {
+      flex: 1; resize: none;
+      background: #0d1117; color: #c9d1d9;
+      border: 1px solid #21262d; border-radius: 8px;
+      padding: 14px;
+      font-family: 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
+      font-size: 0.92rem; line-height: 1.65;
+      outline: none; tab-size: 2;
+    }
+    #doc:focus { border-color: #6c5ce7; }
+
+    /* ── Cursor flags (positioned over right edge of editor) ── */
+    .cflag {
+      position: absolute;
+      right: 14px;   /* aligned to editorWrap padding */
+      padding: 2px 7px;
+      border-radius: 4px 0 0 4px;
+      font-size: 0.68rem; font-weight: 700;
+      color: #fff; pointer-events: none;
+      white-space: nowrap; z-index: 10;
+      transition: top 0.08s linear;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 200px; flex-shrink: 0;
+      background: #161b22; border-left: 1px solid #21262d;
+      padding: 14px 12px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    #sidebar h2 {
+      font-size: 0.68rem; text-transform: uppercase;
+      letter-spacing: 0.08em; color: #8b949e; margin-bottom: 8px;
+    }
+    .ucard {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 9px; border-radius: 6px; background: #0d1117;
+    }
+    .ucard.me { border: 1px solid #21262d; }
+    .udot  { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .uinfo { flex: 1; min-width: 0; }
+    .uname {
+      font-size: 0.82rem; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .upos  { font-size: 0.68rem; color: #8b949e; }
+  </style>
+</head>
+<body>
+
+<!-- ── Login ── -->
+<div id="login">
+  <h1>🖊 Collab Editor</h1>
+  <p>SODP real-time demo — open multiple tabs</p>
+  <input id="nameInput" placeholder="Your name" maxlength="40" autocomplete="off" autofocus>
+  <button id="joinBtn">Join session</button>
+</div>
+
+<!-- ── App ── -->
+<div id="app">
+  <header>
+    <h1>🖊 Collab Editor</h1>
+    <span id="myBadge"></span>
+    <div id="conn">
+      <div id="connDot"></div>
+      <span id="connLabel">Connecting…</span>
+    </div>
+  </header>
+  <div class="layout">
+    <div id="editorWrap">
+      <textarea id="doc" placeholder="Start typing… changes sync to every open tab in real time"
+                spellcheck="false"></textarea>
+    </div>
+    <div id="sidebar">
+      <h2>Online</h2>
+      <div id="userList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Inline MessagePack codec — no CDN, no build step required.
+// Handles the full SODP wire format: [u8, u32, u64, map|null].
+// ═══════════════════════════════════════════════════════════════════════════
+const mp = (() => {
+  const te = new TextEncoder();
+  const td = new TextDecoder();
+
+  // ── Encoder ─────────────────────────────────────────────────────────────
+  function encode(val) {
+    const b = [];
+    _e(val, b);
+    return new Uint8Array(b);
+  }
+
+  function _e(v, b) {
+    if (v === null || v === undefined) { b.push(0xc0); return; }
+    if (v === false) { b.push(0xc2); return; }
+    if (v === true)  { b.push(0xc3); return; }
+    const t = typeof v;
+    if (t === 'number') { _eNum(v, b); return; }
+    if (t === 'string') { _eStr(v, b); return; }
+    if (Array.isArray(v)) { _eArr(v, b); return; }
+    if (t === 'object')  { _eMap(v, b); return; }
+  }
+
+  function _u16(n, b) { b.push((n >> 8) & 0xff, n & 0xff); }
+  function _u32(n, b) { b.push((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff); }
+
+  function _eNum(n, b) {
+    if (!Number.isInteger(n) || n > 2**53) {
+      const dv = new DataView(new ArrayBuffer(9));
+      dv.setUint8(0, 0xcb); dv.setFloat64(1, n, false);
+      for (let i = 0; i < 9; i++) b.push(dv.getUint8(i));
+    } else if (n >= 0) {
+      if (n < 128)          b.push(n);
+      else if (n <= 0xff)   b.push(0xcc, n);
+      else if (n <= 0xffff) { b.push(0xcd); _u16(n, b); }
+      else                  { b.push(0xce); _u32(n, b); }
+    } else {
+      if (n >= -32)         b.push(n & 0xff);
+      else if (n >= -128)   b.push(0xd0, n & 0xff);
+      else if (n >= -32768) { b.push(0xd1); _u16(n & 0xffff, b); }
+      else                  { b.push(0xd2); _u32(n >>> 0, b); }
+    }
+  }
+
+  function _eStr(s, b) {
+    const enc = te.encode(s);
+    const len = enc.length;
+    if      (len < 32)      b.push(0xa0 | len);
+    else if (len <= 0xff)   b.push(0xd9, len);
+    else if (len <= 0xffff) { b.push(0xda); _u16(len, b); }
+    else                    { b.push(0xdb); _u32(len, b); }
+    enc.forEach(x => b.push(x));
+  }
+
+  function _eArr(arr, b) {
+    const n = arr.length;
+    if      (n < 16)      b.push(0x90 | n);
+    else if (n <= 0xffff) { b.push(0xdc); _u16(n, b); }
+    else                  { b.push(0xdd); _u32(n, b); }
+    arr.forEach(v => _e(v, b));
+  }
+
+  function _eMap(obj, b) {
+    const keys = Object.keys(obj);
+    const n = keys.length;
+    if      (n < 16)      b.push(0x80 | n);
+    else if (n <= 0xffff) { b.push(0xde); _u16(n, b); }
+    else                  { b.push(0xdf); _u32(n, b); }
+    keys.forEach(k => { _eStr(k, b); _e(obj[k], b); });
+  }
+
+  // ── Decoder ─────────────────────────────────────────────────────────────
+  function decode(data) {
+    const buf  = data.buffer;
+    const off  = data.byteOffset;
+    const view = new DataView(buf, off, data.byteLength);
+    let p = 0;
+
+    function rd() {
+      const b = view.getUint8(p++);
+      if (b <= 0x7f) return b;                          // positive fixint
+      if (b >= 0xe0) return b - 256;                    // negative fixint
+      if ((b & 0xf0) === 0x80) return rdMap(b & 0x0f); // fixmap
+      if ((b & 0xf0) === 0x90) return rdArr(b & 0x0f); // fixarray
+      if ((b & 0xe0) === 0xa0) return rdStr(b & 0x1f); // fixstr
+      switch (b) {
+        case 0xc0: return null;
+        case 0xc2: return false;
+        case 0xc3: return true;
+        case 0xca: { const v = view.getFloat32(p, false); p += 4; return v; }
+        case 0xcb: { const v = view.getFloat64(p, false); p += 8; return v; }
+        case 0xcc: return view.getUint8(p++);
+        case 0xcd: { const v = view.getUint16(p, false); p += 2; return v; }
+        case 0xce: { const v = view.getUint32(p, false); p += 4; return v; }
+        case 0xcf: { // uint64 — hi*2^32 + lo (loses precision >2^53, fine for seq)
+          const hi = view.getUint32(p, false);
+          const lo = view.getUint32(p + 4, false);
+          p += 8;
+          return hi * 4294967296 + lo;
+        }
+        case 0xd0: return view.getInt8(p++);
+        case 0xd1: { const v = view.getInt16(p, false); p += 2; return v; }
+        case 0xd2: { const v = view.getInt32(p, false); p += 4; return v; }
+        case 0xd9: return rdStr(view.getUint8(p++));
+        case 0xda: { const n = view.getUint16(p, false); p += 2; return rdStr(n); }
+        case 0xdb: { const n = view.getUint32(p, false); p += 4; return rdStr(n); }
+        case 0xdc: { const n = view.getUint16(p, false); p += 2; return rdArr(n); }
+        case 0xdd: { const n = view.getUint32(p, false); p += 4; return rdArr(n); }
+        case 0xde: { const n = view.getUint16(p, false); p += 2; return rdMap(n); }
+        case 0xdf: { const n = view.getUint32(p, false); p += 4; return rdMap(n); }
+        default: throw new Error('msgpack: unknown byte 0x' + b.toString(16) + ' at ' + (p-1));
+      }
+    }
+
+    function rdStr(len) {
+      const s = td.decode(new Uint8Array(buf, off + p, len));
+      p += len; return s;
+    }
+    function rdArr(n) {
+      const a = [];
+      for (let i = 0; i < n; i++) a.push(rd());
+      return a;
+    }
+    function rdMap(n) {
+      const o = {};
+      for (let i = 0; i < n; i++) { const k = rd(); o[k] = rd(); }
+      return o;
+    }
+
+    return rd();
+  }
+
+  return { encode, decode };
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SODP frame types
+// ═══════════════════════════════════════════════════════════════════════════
+const HELLO=0x01, WATCH=0x02, STATE_INIT=0x03, DELTA=0x04,
+      CALL=0x05,  RESULT=0x06, ERROR=0x07,  HEARTBEAT=0x09,
+      AUTH=0x0b,  AUTH_OK=0x0c;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Apply SODP delta ops (mirrors sodp-py/src/sodp/delta.py)
+// ═══════════════════════════════════════════════════════════════════════════
+function applyOps(state, ops) {
+  for (const op of ops) {
+    const parts = (op.path === '/') ? [] : op.path.slice(1).split('/');
+    if (parts.length === 0) {
+      state = (op.op === 'REMOVE') ? null : op.value;
+    } else {
+      state = (state && typeof state === 'object') ? Object.assign({}, state) : {};
+      let node = state;
+      for (let i = 0; i < parts.length - 1; i++) {
+        node[parts[i]] = (node[parts[i]] && typeof node[parts[i]] === 'object')
+          ? Object.assign({}, node[parts[i]]) : {};
+        node = node[parts[i]];
+      }
+      const k = parts[parts.length - 1];
+      if (op.op === 'REMOVE') delete node[k];
+      else                    node[k] = op.value;
+    }
+  }
+  return state;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Minimal SODP client
+// ═══════════════════════════════════════════════════════════════════════════
+function SodpClient(url, token) {
+  this._url      = url;
+  this._token    = token;
+  this._seq      = 0;
+  this._sid      = 10;
+  this._watches  = {};   // key → { cbs: [], value, version }
+  this._s2k      = {};   // stream_id → key
+  this._calls    = {};   // call_id → { resolve, reject }
+  this._ready    = false;
+  this._readyCbs = [];
+  this.onConnect    = null;
+  this.onDisconnect = null;
+  this._open();
+}
+
+SodpClient.prototype._open = function() {
+  const ws = new WebSocket(this._url);
+  ws.binaryType = 'arraybuffer';
+  this._ws = ws;
+  const self = this;
+  ws.onmessage = function(e) {
+    try {
+      const frame = mp.decode(new Uint8Array(e.data));
+      self._dispatch(frame[0], frame[1], frame[2], frame[3]);
+    } catch(err) {
+      console.error('[SODP] decode error:', err);
+    }
+  };
+  ws.onclose = function() {
+    self._ready = false;
+    if (self.onDisconnect) self.onDisconnect();
+  };
+  ws.onerror = function(e) {
+    console.warn('[SODP] WebSocket error — is the SODP server running on', self._url, '?', e);
+  };
+};
+
+SodpClient.prototype._dispatch = function(type, sid, _seq, body) {
+  const self = this;
+  switch (type) {
+    case HELLO:
+      if (body && body.auth) {
+        this._raw(AUTH, 0, { token: this._token });
+      } else {
+        this._onReady();
+      }
+      break;
+
+    case AUTH_OK:
+      this._onReady();
+      break;
+
+    case STATE_INIT: {
+      const key = body.state;
+      const e   = this._watches[key];
+      if (!e) break;
+      this._s2k[sid] = key;
+      e.value   = body.value;
+      e.version = body.version;
+      e.cbs.forEach(function(cb) { cb(e.value, e.version); });
+      break;
+    }
+
+    case DELTA: {
+      const key = this._s2k[sid];
+      const e   = key ? this._watches[key] : null;
+      if (!e) break;
+      e.value   = applyOps(e.value, body.ops);
+      e.version = body.version;
+      e.cbs.forEach(function(cb) { cb(e.value, e.version); });
+      break;
+    }
+
+    case RESULT: {
+      const p = this._calls[body.call_id];
+      if (p) { delete this._calls[body.call_id]; p.resolve(body.data); }
+      break;
+    }
+
+    case ERROR: {
+      console.warn('[SODP] server error', body.code, body.message);
+      const ids = Object.keys(self._calls);
+      if (ids.length) {
+        const p = self._calls[ids[0]];
+        delete self._calls[ids[0]];
+        p.reject(new Error(body.message));
+      }
+      break;
+    }
+
+    case HEARTBEAT:
+      this._raw(HEARTBEAT, 0, null);
+      break;
+  }
+};
+
+SodpClient.prototype._onReady = function() {
+  const self = this;
+  this._ready = true;
+  Object.keys(this._watches).forEach(function(key) {
+    self._raw(WATCH, self._sid++, { state: key });
+  });
+  this._readyCbs.forEach(function(cb) { cb(); });
+  this._readyCbs = [];
+  if (this.onConnect) this.onConnect();
+};
+
+SodpClient.prototype._raw = function(type, sid, body) {
+  if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
+  this._ws.send(mp.encode([type, sid, ++this._seq, body]));
+};
+
+SodpClient.prototype.ready = function() {
+  const self = this;
+  if (this._ready) return Promise.resolve();
+  return new Promise(function(r) { self._readyCbs.push(r); });
+};
+
+SodpClient.prototype.watch = function(key, cb) {
+  if (!this._watches[key]) {
+    this._watches[key] = { cbs: [], value: null, version: 0 };
+    if (this._ready) this._raw(WATCH, this._sid++, { state: key });
+  }
+  this._watches[key].cbs.push(cb);
+  const self = this;
+  return function() {
+    const e = self._watches[key];
+    if (e) e.cbs = e.cbs.filter(function(x) { return x !== cb; });
+  };
+};
+
+SodpClient.prototype.call = function(method, args) {
+  const self = this;
+  return new Promise(function(resolve, reject) {
+    const id = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, function(c) {
+      return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16);
+    });
+    self._calls[id] = { resolve: resolve, reject: reject };
+    setTimeout(function() {
+      if (self._calls[id]) { delete self._calls[id]; reject(new Error('timeout')); }
+    }, 30000);
+    self._raw(CALL, 0, { call_id: id, method: method, args: args });
+  });
+};
+
+SodpClient.prototype.set      = function(k, v)      { return this.call('state.set',      { state: k, value: v }); };
+SodpClient.prototype.patch    = function(k, p)      { return this.call('state.patch',    { state: k, patch: p }); };
+SodpClient.prototype.presence = function(k, path, v) { return this.call('state.presence', { state: k, path: path, value: v }); };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════
+const PALETTE = ['#e74c3c','#3498db','#2ecc71','#f39c12',
+                 '#9b59b6','#1abc9c','#e67e22','#fd79a8',
+                 '#00b894','#6c5ce7','#fdcb6e','#74b9ff'];
+
+function colorFor(sub) {
+  let h = 0;
+  for (let i = 0; i < sub.length; i++) h = (h * 31 + sub.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length];
+}
+
+function lineCol(text, offset) {
+  const before = text.slice(0, Math.min(offset, text.length));
+  const lines  = before.split('\n');
+  return { line: lines.length, col: lines[lines.length - 1].length + 1 };
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// App
+// ═══════════════════════════════════════════════════════════════════════════
+const SODP_URL  = 'ws://localhost:7777';
+const DOC_KEY   = 'collab.doc';
+const CURS_KEY  = 'collab.cursors';
+
+let client, myName, mySub, myColor;
+let localEditing = false, flushTimer = null;
+let cursorFlags  = {};   // sub → DOM element
+
+const loginEl    = document.getElementById('login');
+const appEl      = document.getElementById('app');
+const nameInput  = document.getElementById('nameInput');
+const joinBtn    = document.getElementById('joinBtn');
+const myBadge    = document.getElementById('myBadge');
+const connDot    = document.getElementById('connDot');
+const connLabel  = document.getElementById('connLabel');
+const userListEl = document.getElementById('userList');
+const docEl      = document.getElementById('doc');
+const wrapEl     = document.getElementById('editorWrap');
+
+// ── Join ──────────────────────────────────────────────────────────────────
+joinBtn.addEventListener('click', join);
+nameInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') join(); });
+
+async function join() {
+  const name = nameInput.value.trim() || 'Guest';
+  joinBtn.disabled = true;
+  joinBtn.textContent = 'Connecting…';
+
+  const res  = await fetch('/token?name=' + encodeURIComponent(name));
+  const data = await res.json();
+  myName  = data.name;
+  mySub   = data.sub;
+  myColor = colorFor(mySub);
+
+  loginEl.style.display = 'none';
+  appEl.style.display   = 'flex';
+  docEl.focus();
+
+  myBadge.innerHTML =
+    '<span style="color:' + myColor + ';font-weight:700">● ' + esc(myName) + '</span>';
+
+  client = new SodpClient(SODP_URL, data.token);
+  client.onConnect    = function() { connDot.className = 'on'; connLabel.textContent = 'Connected'; };
+  client.onDisconnect = function() { connDot.className = '';   connLabel.textContent = 'Disconnected'; };
+
+  await client.ready();
+
+  // ── Watch document text ──────────────────────────────────────────────
+  client.watch(DOC_KEY, function(val) {
+    if (localEditing || !val) return;
+    const saved = docEl.selectionStart;
+    docEl.value = val.text || '';
+    docEl.selectionStart = docEl.selectionEnd = Math.min(saved, docEl.value.length);
+  });
+
+  // ── Watch cursors ────────────────────────────────────────────────────
+  client.watch(CURS_KEY, function(val) {
+    renderSidebar(val || {});
+    renderFlags(val || {});
+  });
+
+  // Announce my cursor immediately
+  pushCursor();
+}
+
+// ── Editor events ─────────────────────────────────────────────────────────
+docEl.addEventListener('input',  function() {
+  localEditing = true;
+  clearTimeout(flushTimer);
+  // Reset the echo-suppression flag 150 ms after the last keystroke.
+  // During that window remote DELTAs are ignored so the textarea isn't
+  // interrupted while typing; outside it remote changes flow in normally.
+  flushTimer = setTimeout(function() { localEditing = false; }, 150);
+  flushDoc();   // send every keystroke immediately — true real-time
+  pushCursor();
+});
+docEl.addEventListener('keyup',  pushCursor);
+docEl.addEventListener('click',  pushCursor);
+docEl.addEventListener('select', pushCursor);
+docEl.addEventListener('scroll', function() { renderFlags(latestCursors()); });
+
+function flushDoc() {
+  if (!client) return;
+  client.set(DOC_KEY, { text: docEl.value });
+}
+
+function pushCursor() {
+  if (!client) return;
+  const offset = docEl.selectionStart;
+  const lc = lineCol(docEl.value, offset);
+  // state.presence sets the value AND binds it to the session lifetime —
+  // the server auto-removes this path when the tab closes or network drops.
+  client.presence(CURS_KEY, '/' + mySub,
+    { name: myName, color: myColor, offset: offset, line: lc.line, col: lc.col });
+}
+
+function latestCursors() {
+  const e = client && client._watches[CURS_KEY];
+  return (e && e.value) ? e.value : {};
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────
+function renderSidebar(cursors) {
+  const entries = Object.entries(cursors);
+  if (entries.length === 0) {
+    userListEl.innerHTML =
+      '<div style="color:#8b949e;font-size:0.78rem;padding:4px 2px">No one else here yet</div>';
+    return;
+  }
+  entries.sort(function(a, b) {
+    if (a[0] === mySub) return -1;
+    if (b[0] === mySub) return  1;
+    return a[1].name.localeCompare(b[1].name);
+  });
+
+  let html = '';
+  for (let i = 0; i < entries.length; i++) {
+    const sub  = entries[i][0];
+    const info = entries[i][1];
+    const isMe = sub === mySub;
+    html +=
+      '<div class="ucard' + (isMe ? ' me' : '') + '">' +
+        '<div class="udot" style="background:' + info.color + '"></div>' +
+        '<div class="uinfo">' +
+          '<div class="uname">' + esc(info.name) +
+            (isMe ? ' <span style="color:#8b949e;font-weight:400">(you)</span>' : '') +
+          '</div>' +
+          '<div class="upos">Ln ' + info.line + ', Col ' + info.col + '</div>' +
+        '</div>' +
+      '</div>';
+  }
+  userListEl.innerHTML = html;
+}
+
+// ── Cursor flags ──────────────────────────────────────────────────────────
+// Position a coloured name-tag on the right edge of the editor at each
+// user's current line.  Uses lineHeight from computed style — no DOM tricks.
+function renderFlags(cursors) {
+  // Remove stale flags
+  Object.keys(cursorFlags).forEach(function(sub) {
+    if (!cursors[sub]) { cursorFlags[sub].remove(); delete cursorFlags[sub]; }
+  });
+
+  const cs     = getComputedStyle(docEl);
+  const lineH  = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.65;
+  const padTop = parseFloat(cs.paddingTop);
+  const editorTop = 14;  // editorWrap padding-top
+
+  Object.keys(cursors).forEach(function(sub) {
+    if (sub === mySub) return;
+    const info = cursors[sub];
+
+    let flag = cursorFlags[sub];
+    if (!flag) {
+      flag = document.createElement('div');
+      flag.className = 'cflag';
+      flag.style.background = info.color;
+      flag.textContent = info.name;
+      wrapEl.appendChild(flag);
+      cursorFlags[sub] = flag;
+    } else {
+      // Update name in case it changed
+      flag.textContent = info.name;
+    }
+
+    const lineIndex = (info.line || 1) - 1;
+    const top = editorTop + padTop + lineIndex * lineH - docEl.scrollTop;
+
+    // Hide if scrolled out of view
+    if (top < editorTop || top > editorTop + docEl.clientHeight) {
+      flag.style.display = 'none';
+    } else {
+      flag.style.display = '';
+      flag.style.top = top + 'px';
+    }
+  });
+}
+</script>
+</body>
+</html>

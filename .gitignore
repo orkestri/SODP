@@ -18,8 +18,11 @@ sodp-py/__pycache__/
 # Java
 sodp-java/target/
 
-# Demo app (not published)
-/demo-collab/
+## Demo app (not published)
+#/demo-collab/
+
+# Local environment (never commit — copy from .env.example)
+.env
 
 # IDE & tooling
 .idea/
