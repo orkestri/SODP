@@ -387,7 +387,7 @@ export class SodpClient {
     } else if (entry.initialized) {
       // Fire immediately only when we have a confirmed value from the server.
       // If still waiting for STATE_INIT, the callback will fire when it arrives.
-      cb(entry.value, { version: entry.version, initialized: true });
+      cb(entry.value, { version: entry.version, initialized: entry.initialized });
     }
 
     entry.callbacks.add(cb);

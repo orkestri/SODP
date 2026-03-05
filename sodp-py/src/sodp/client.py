@@ -192,7 +192,10 @@ class SodpClient:
             data = await self._send_queue.get()
             try:
                 await ws.send(data)
-            except Exception:
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("[SODP] sender error: %s", e)
                 break
 
     async def _recv_loop(self, ws: websockets.WebSocketClientProtocol) -> None:
@@ -432,7 +435,10 @@ class SodpClient:
         self._send_or_queue(_CALL, 0, {"call_id": call_id, "method": method, "args": args})
         try:
             return await asyncio.wait_for(fut, timeout=30.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            self._pending_calls.pop(call_id, None)
+            raise
+        except asyncio.TimeoutError:
             self._pending_calls.pop(call_id, None)
             raise TimeoutError(f"[SODP] call timeout: {method}")
 
