@@ -14,7 +14,7 @@ build-react:
 	cd react-sodp && npm install && npm run build
 
 build-py:
-	cd sodp-py && pip install -e . --quiet
+	cd sodp-py && python3 -m venv .venv && .venv/bin/pip install -e .[dev] --quiet
 
 build-java:
 	cd sodp-java && mvn compile -q
@@ -33,7 +33,7 @@ test-react:
 	cd react-sodp && npm test
 
 test-py:
-	cd sodp-py && python -m pytest tests/ -q
+	cd sodp-py && .venv/bin/python -m pytest tests/ -q
 
 test-java:
 	cd sodp-java && mvn test -q
@@ -69,7 +69,7 @@ integration:
 	echo "Running TS integration tests..."; \
 	cd client-ts && node integration.mjs; TS_EXIT=$$?; cd ..; \
 	echo "Running Python integration tests..."; \
-	cd sodp-py && python integration.py; PY_EXIT=$$?; cd ..; \
+	cd sodp-py && .venv/bin/python integration.py; PY_EXIT=$$?; cd ..; \
 	kill $$SERVER_PID 2>/dev/null; \
 	exit $$(( TS_EXIT + PY_EXIT ))
 
