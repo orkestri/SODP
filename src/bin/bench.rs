@@ -249,7 +249,7 @@ async fn bench_sodp(iters: usize) -> BenchResult {
         seq:        0,
         body:       serde_json::json!({ "state": "bench.sodp" }),
     };
-    watcher_ws.send(WsMsg::Binary(watch.encode().unwrap().into())).await.unwrap();
+    watcher_ws.send(WsMsg::Binary(watch.encode().unwrap())).await.unwrap();
     watcher_ws.next().await; // STATE_INIT
 
     // Watcher task: receives DELTAs and reports (recv_time, bytes) to the main task.
@@ -286,7 +286,7 @@ async fn bench_sodp(iters: usize) -> BenchResult {
         };
 
         let send_time = Instant::now();
-        writer_ws.send(WsMsg::Binary(call.encode().unwrap().into())).await.unwrap();
+        writer_ws.send(WsMsg::Binary(call.encode().unwrap())).await.unwrap();
 
         // Wait for the watcher to receive the DELTA — this is the push-notification
         // latency, directly comparable to REST's POST → SSE-event measurement.
@@ -330,18 +330,13 @@ async fn bench_rest(iters: usize) -> BenchResult {
 
         // Collect bytes until we see the blank-line SSE event terminator "\n\n"
         let mut buf = Vec::new();
-        loop {
-            match sse.next().await {
-                Some(Ok(chunk)) => {
-                    buf.extend_from_slice(&chunk);
-                    if buf.windows(2).any(|w| w[0] == b'\n' && w[1] == b'\n') {
-                        latencies_us.push(t.elapsed().as_micros());
-                        bytes_per_update.push(buf.len());
-                        buf.clear();
-                        break;
-                    }
-                }
-                _ => break,
+        while let Some(Ok(chunk)) = sse.next().await {
+            buf.extend_from_slice(&chunk);
+            if buf.windows(2).any(|w| w[0] == b'\n' && w[1] == b'\n') {
+                latencies_us.push(t.elapsed().as_micros());
+                bytes_per_update.push(buf.len());
+                buf.clear();
+                break;
             }
         }
     }
@@ -536,7 +531,7 @@ async fn bench_fanout_sodp(watchers: usize, rounds: usize) -> FanoutResult {
                 seq:        0,
                 body:       serde_json::json!({ "state": "fanout.sodp" }),
             };
-            ws.send(WsMsg::Binary(watch.encode().unwrap().into())).await.unwrap();
+            ws.send(WsMsg::Binary(watch.encode().unwrap())).await.unwrap();
             ws.next().await; // STATE_INIT
 
             // Each mutation produces exactly one DELTA for this watcher.
@@ -568,7 +563,7 @@ async fn bench_fanout_sodp(watchers: usize, rounds: usize) -> FanoutResult {
         };
 
         let send_time = Instant::now();
-        writer.send(WsMsg::Binary(call.encode().unwrap().into())).await.unwrap();
+        writer.send(WsMsg::Binary(call.encode().unwrap())).await.unwrap();
         writer.next().await; // consume RESULT (writer is not subscribed, no DELTA)
 
         let (max_us, total_bytes) =
@@ -779,15 +774,14 @@ async fn test_resume() {
                 "args":    { "state": "test.resume", "value": { "n": value } },
             }),
         };
-        ws.send(WsMsg::Binary(call.encode().unwrap().into())).await.unwrap();
+        ws.send(WsMsg::Binary(call.encode().unwrap())).await.unwrap();
         // Read RESULT — body is { call_id, success, data: { version: N } }
-        if let Some(Ok(WsMsg::Binary(bytes))) = ws.next().await {
-            if let Ok(f) = Frame::decode(&bytes) {
+        if let Some(Ok(WsMsg::Binary(bytes))) = ws.next().await
+            && let Ok(f) = Frame::decode(&bytes) {
                 return f.body
                     .get("data").and_then(|d| d.get("version")).and_then(|v| v.as_u64())
                     .unwrap_or(0);
             }
-        }
         0
     }
 
@@ -802,7 +796,7 @@ async fn test_resume() {
         frame_type: types::WATCH, stream_id: 0, seq: 0,
         body: serde_json::json!({ "state": "test.resume" }),
     };
-    watcher.send(WsMsg::Binary(watch.encode().unwrap().into())).await.unwrap();
+    watcher.send(WsMsg::Binary(watch.encode().unwrap())).await.unwrap();
     watcher.next().await; // STATE_INIT
 
     // Write three values; watcher receives all three.
@@ -831,7 +825,7 @@ async fn test_resume() {
         seq:        0,
         body: serde_json::json!({ "state": "test.resume", "since_version": v_c }),
     };
-    resumed.send(WsMsg::Binary(resume_frame.encode().unwrap().into())).await.unwrap();
+    resumed.send(WsMsg::Binary(resume_frame.encode().unwrap())).await.unwrap();
 
     // Collect all frames until STATE_INIT (the "you are now live" marker).
     let mut replayed_versions: Vec<u64> = Vec::new();

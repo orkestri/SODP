@@ -164,7 +164,7 @@ impl StateStore {
             if let Some(plog) = &self.plog {
                 let log_entry = LogEntry { version, key: key.to_string(), ops: ops.clone(), value: new_value };
                 let needs_compact = {
-                    let mut guard = plog.lock().unwrap();
+                    let mut guard = plog.lock().expect("persistent log mutex poisoned");
                     if let Err(e) = guard.append(&log_entry) {
                         tracing::error!("Failed to write log entry: {e}");
                     }
@@ -184,9 +184,7 @@ impl StateStore {
     /// Returns `Some((version, ops))` with a single `REMOVE "/"` op if the key
     /// existed; `None` if it was already absent (no-op, no version bump).
     pub fn delete(&self, key: &str) -> Option<(u64, Vec<DeltaOp>)> {
-        if self.entries.remove(key).is_none() {
-            return None;
-        }
+        self.entries.remove(key)?;
         let version = self.global_version.fetch_add(1, Ordering::SeqCst) + 1;
         let ops = vec![DeltaOp::remove("/")];
 
@@ -200,7 +198,7 @@ impl StateStore {
                 value: Value::Null,
             };
             let needs_compact = {
-                let mut guard = plog.lock().unwrap();
+                let mut guard = plog.lock().expect("persistent log mutex poisoned");
                 if let Err(e) = guard.append(&log_entry) {
                     tracing::error!("Failed to write delete log entry: {e}");
                 }
@@ -267,7 +265,7 @@ impl StateStore {
             })
             .collect();
 
-        if let Err(e) = plog.lock().unwrap().compact(&snapshot) {
+        if let Err(e) = plog.lock().expect("persistent log mutex poisoned").compact(&snapshot) {
             tracing::error!("Log compaction failed: {e}");
         }
     }

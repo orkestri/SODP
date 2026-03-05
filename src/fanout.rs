@@ -83,7 +83,7 @@ impl FanoutBus {
             match self.subscriptions.get(state_key) {
                 Some(subs) => subs
                     .iter()
-                    .filter(|s| exclude_session.map_or(true, |ex| s.session_id != ex))
+                    .filter(|s| exclude_session.is_none_or(|ex| s.session_id != ex))
                     .map(|s| (s.stream_id, s.tx.clone()))
                     .collect(),
                 None => return,

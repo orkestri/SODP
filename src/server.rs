@@ -207,12 +207,11 @@ impl SodpServer {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, peer)) => {
-                            if let Some(limit) = self.max_connections {
-                                if self.connections.load(Ordering::Relaxed) >= limit {
+                            if let Some(limit) = self.max_connections
+                                && self.connections.load(Ordering::Relaxed) >= limit {
                                     warn!("Max connections ({limit}) reached — rejecting {peer}");
                                     continue; // drop(stream) is implicit
                                 }
-                            }
                             info!("New connection from {peer}");
                             let n = self.connections.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("sodp_connections_active").set(n as f64);
@@ -257,7 +256,7 @@ impl SodpServer {
         let (tx, mut rx) = mpsc::unbounded_channel::<OutboundMsg>();
 
         let auth_required = self.jwt_config.is_some();
-        ws_tx.send(Message::Binary(frame::hello(auth_required).encode()?.into())).await?;
+        ws_tx.send(Message::Binary(frame::hello(auth_required).encode()?)).await?;
 
         // If auth is enabled, complete the JWT handshake before the event loop.
         let opt_claims: Option<Claims> = if let Some(config) = &self.jwt_config {
@@ -317,10 +316,10 @@ impl SodpServer {
                     let Some(outbound) = msg else { break };
                     let result = match outbound {
                         OutboundMsg::Frame(f) => match f.encode() {
-                            Ok(bytes) => ws_tx.send(Message::Binary(bytes.into())).await,
+                            Ok(bytes) => ws_tx.send(Message::Binary(bytes)).await,
                             Err(e) => { warn!("Frame encode error: {e}"); continue; }
                         },
-                        OutboundMsg::Bytes(b) => ws_tx.send(Message::Binary(b.into())).await,
+                        OutboundMsg::Bytes(b) => ws_tx.send(Message::Binary(b)).await,
                     };
                     if result.is_err() { break; }
                 }
@@ -332,7 +331,7 @@ impl SodpServer {
                             if bytes.len() > self.max_frame_bytes {
                                 warn!("[{session_id}] Frame too large ({} B > {} B limit) — closing", bytes.len(), self.max_frame_bytes);
                                 let _ = ws_tx.send(Message::Binary(
-                                    frame::error(0, 0, 413, "frame too large").encode()?.into()
+                                    frame::error(0, 0, 413, "frame too large").encode()?
                                 )).await;
                                 break;
                             }
@@ -366,7 +365,7 @@ impl SodpServer {
                 _ = &mut token_expiry => {
                     info!("Session {session_id} token expired — closing");
                     let _ = ws_tx.send(Message::Binary(
-                        frame::error(0, 0, 401, "token expired").encode()?.into()
+                        frame::error(0, 0, 401, "token expired").encode()?
                     )).await;
                     break;
                 }
@@ -426,7 +425,7 @@ impl SodpServer {
                 Some(Ok(Message::Binary(bytes))) => {
                     if bytes.len() > self.max_frame_bytes {
                         let _ = ws_tx.send(Message::Binary(
-                            frame::error(0, 0, 413, "frame too large").encode()?.into()
+                            frame::error(0, 0, 413, "frame too large").encode()?
                         )).await;
                         return Err(anyhow::anyhow!("frame too large during auth ({} B)", bytes.len()));
                     }
@@ -434,7 +433,7 @@ impl SodpServer {
                         Ok(f)  => f,
                         Err(e) => {
                             let _ = ws_tx.send(Message::Binary(
-                                frame::error(0, 0, 401, "bad frame during auth").encode()?.into()
+                                frame::error(0, 0, 401, "bad frame during auth").encode()?
                             )).await;
                             return Err(e.into());
                         }
@@ -443,7 +442,7 @@ impl SodpServer {
                     match frame.frame_type {
                         types::HEARTBEAT => {
                             // Allow heartbeats during auth; echo one back.
-                            let _ = ws_tx.send(Message::Binary(frame::heartbeat().encode()?.into())).await;
+                            let _ = ws_tx.send(Message::Binary(frame::heartbeat().encode()?)).await;
                         }
 
                         types::AUTH => {
@@ -455,14 +454,14 @@ impl SodpServer {
                             match Self::validate_jwt(token, config) {
                                 Ok(claims) => {
                                     ws_tx.send(Message::Binary(
-                                        frame::auth_ok(&claims.sub).encode()?.into()
+                                        frame::auth_ok(&claims.sub).encode()?
                                     )).await?;
                                     return Ok(claims);
                                 }
                                 Err(e) => {
                                     let msg = format!("auth failed: {e}");
                                     let _ = ws_tx.send(Message::Binary(
-                                        frame::error(0, 0, 401, &msg).encode()?.into()
+                                        frame::error(0, 0, 401, &msg).encode()?
                                     )).await;
                                     return Err(anyhow::anyhow!(msg));
                                 }
@@ -471,14 +470,14 @@ impl SodpServer {
 
                         _ => {
                             let _ = ws_tx.send(Message::Binary(
-                                frame::error(0, 0, 401, "auth required").encode()?.into()
+                                frame::error(0, 0, 401, "auth required").encode()?
                             )).await;
                             return Err(anyhow::anyhow!("auth required — unexpected frame before AUTH"));
                         }
                     }
                 }
                 Some(Ok(Message::Ping(_))) => {
-                    let _ = ws_tx.send(Message::Binary(frame::heartbeat().encode()?.into())).await;
+                    let _ = ws_tx.send(Message::Binary(frame::heartbeat().encode()?)).await;
                 }
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
                     return Err(anyhow::anyhow!("connection closed before auth"));
@@ -537,7 +536,7 @@ impl SodpServer {
                 Ok(())
             }
             types::HEARTBEAT => {
-                ws_tx.send(Message::Binary(frame::heartbeat().encode()?.into())).await?;
+                ws_tx.send(Message::Binary(frame::heartbeat().encode()?)).await?;
                 Ok(())
             }
             t => { warn!("Unhandled frame type: {t:#04x}"); Ok(()) }
@@ -553,37 +552,35 @@ impl SodpServer {
         ws_tx: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
         tx: &mpsc::UnboundedSender<OutboundMsg>,
     ) -> anyhow::Result<()> {
-        if let Some(ref mut lim) = session.watch_limiter {
-            if !lim.allow() {
+        if let Some(ref mut lim) = session.watch_limiter
+            && !lim.allow() {
                 metrics::counter!("sodp_rate_limited_total", "type" => "watch").increment(1);
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded").encode()?.into()
+                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded").encode()?
                 )).await?;
                 return Ok(());
             }
-        }
 
         let state_key = match frame.body.get("state").and_then(|v| v.as_str()) {
             Some(k) => k.to_string(),
             None => {
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 400, "WATCH: missing 'state' key").encode()?.into()
+                    frame::error(frame.stream_id, seq, 400, "WATCH: missing 'state' key").encode()?
                 )).await?;
                 return Ok(());
             }
         };
 
-        if let Some(acl) = &self.acl {
-            if !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
+        if let Some(acl) = &self.acl
+            && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 403, "forbidden").encode()?.into()
+                    frame::error(frame.stream_id, seq, 403, "forbidden").encode()?
                 )).await?;
                 return Ok(());
             }
-        }
 
         let stream_id = session.allocate_stream();
         session.add_watch(stream_id, state_key.clone());
@@ -603,7 +600,7 @@ impl SodpServer {
 
         let seq = session.next_seq();
         ws_tx.send(Message::Binary(
-            frame::state_init(stream_id, seq, &state_key, version, value, initialized).encode()?.into()
+            frame::state_init(stream_id, seq, &state_key, version, value, initialized).encode()?
         )).await?;
 
         debug!("Session {} watching '{}' on stream {}", session.id, state_key, stream_id);
@@ -636,37 +633,35 @@ impl SodpServer {
         ws_tx: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
         tx: &mpsc::UnboundedSender<OutboundMsg>,
     ) -> anyhow::Result<()> {
-        if let Some(ref mut lim) = session.watch_limiter {
-            if !lim.allow() {
+        if let Some(ref mut lim) = session.watch_limiter
+            && !lim.allow() {
                 metrics::counter!("sodp_rate_limited_total", "type" => "resume").increment(1);
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded").encode()?.into()
+                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded").encode()?
                 )).await?;
                 return Ok(());
             }
-        }
 
         let state_key = match frame.body.get("state").and_then(|v| v.as_str()) {
             Some(k) => k.to_string(),
             None => {
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 400, "RESUME: missing 'state' key").encode()?.into()
+                    frame::error(frame.stream_id, seq, 400, "RESUME: missing 'state' key").encode()?
                 )).await?;
                 return Ok(());
             }
         };
 
-        if let Some(acl) = &self.acl {
-            if !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
+        if let Some(acl) = &self.acl
+            && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 403, "forbidden").encode()?.into()
+                    frame::error(frame.stream_id, seq, 403, "forbidden").encode()?
                 )).await?;
                 return Ok(());
             }
-        }
 
         let since_version = frame.body
             .get("since_version")
@@ -688,7 +683,7 @@ impl SodpServer {
                 let seq = session.next_seq();
                 let body_mp = encode_delta_body(*version, ops);
                 let wire = frame::delta_bytes(stream_id, seq, &body_mp);
-                ws_tx.send(Message::Binary(wire.into())).await?;
+                ws_tx.send(Message::Binary(wire)).await?;
             }
         }
 
@@ -701,7 +696,7 @@ impl SodpServer {
         };
         let seq = session.next_seq();
         ws_tx.send(Message::Binary(
-            frame::state_init(stream_id, seq, &state_key, version, value, initialized).encode()?.into()
+            frame::state_init(stream_id, seq, &state_key, version, value, initialized).encode()?
         )).await?;
 
         debug!(
@@ -731,7 +726,7 @@ impl SodpServer {
             None => {
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 400, "CALL: missing 'method'").encode()?.into()
+                    frame::error(frame.stream_id, seq, 400, "CALL: missing 'method'").encode()?
                 )).await?;
                 return Ok(());
             }
@@ -739,30 +734,27 @@ impl SodpServer {
 
         let args = frame.body.get("args").cloned().unwrap_or(serde_json::Value::Null);
 
-        if let Some(ref mut lim) = session.write_limiter {
-            if !lim.allow() {
+        if let Some(ref mut lim) = session.write_limiter
+            && !lim.allow() {
                 metrics::counter!("sodp_rate_limited_total", "type" => "write").increment(1);
                 let seq = session.next_seq();
                 ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded").encode()?.into()
+                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded").encode()?
                 )).await?;
                 return Ok(());
             }
-        }
 
         // ACL write check — all CALL methods carry the target key in args.state.
         // An absent key will be caught by the individual method arms (→ 400).
-        if let Some(acl) = &self.acl {
-            if let Some(state_key) = args.get("state").and_then(|v| v.as_str()) {
-                if !acl.can_write(state_key, session.sub.as_deref(), &session.claims) {
+        if let Some(acl) = &self.acl
+            && let Some(state_key) = args.get("state").and_then(|v| v.as_str())
+                && !acl.can_write(state_key, session.sub.as_deref(), &session.claims) {
                     let seq = session.next_seq();
                     ws_tx.send(Message::Binary(
-                        frame::error(frame.stream_id, seq, 403, "forbidden").encode()?.into()
+                        frame::error(frame.stream_id, seq, 403, "forbidden").encode()?
                     )).await?;
                     return Ok(());
                 }
-            }
-        }
 
         let method_label: &'static str = match method.as_str() {
             "state.set"      => "state.set",
@@ -783,7 +775,7 @@ impl SodpServer {
                     Err(msg) => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, &msg).encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, &msg).encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -791,15 +783,14 @@ impl SodpServer {
 
 
                 // Validate against schema before applying.
-                if let Some(schema) = &self.schema {
-                    if let Err(msg) = schema.validate(&state_key, &new_value) {
+                if let Some(schema) = &self.schema
+                    && let Err(msg) = schema.validate(&state_key, &new_value) {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 422, &msg).encode()?.into()
+                            frame::error(frame.stream_id, seq, 422, &msg).encode()?
                         )).await?;
                         return Ok(());
                     }
-                }
 
                 let (version, ops) = self.state.apply(&state_key, new_value.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -814,7 +805,7 @@ impl SodpServer {
                     // no channel hop, no extra select! iteration.
                     if let Some(stream_id) = session.watch_stream_id(&state_key) {
                         let wire = frame::delta_bytes(stream_id, 0, &body_mp);
-                        ws_tx.send(Message::Binary(wire.into())).await?;
+                        ws_tx.send(Message::Binary(wire)).await?;
                     }
 
                     // Cross-node sync (fire-and-forget).
@@ -830,7 +821,7 @@ impl SodpServer {
                         seq,
                         &call_id,
                         Some(serde_json::json!({ "version": version })),
-                    ).encode()?.into()
+                    ).encode()?
                 )).await?;
             }
 
@@ -842,7 +833,7 @@ impl SodpServer {
                     None => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, "state.patch: missing 'state' key").encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, "state.patch: missing 'state' key").encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -853,7 +844,7 @@ impl SodpServer {
                     _ => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, "state.patch: 'patch' must be an object").encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, "state.patch: 'patch' must be an object").encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -868,15 +859,14 @@ impl SodpServer {
                 let merged = json_merge(current, patch);
 
                 // Validate the merged value against schema before applying.
-                if let Some(schema) = &self.schema {
-                    if let Err(msg) = schema.validate(&state_key, &merged) {
+                if let Some(schema) = &self.schema
+                    && let Err(msg) = schema.validate(&state_key, &merged) {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 422, &msg).encode()?.into()
+                            frame::error(frame.stream_id, seq, 422, &msg).encode()?
                         )).await?;
                         return Ok(());
                     }
-                }
 
                 let (version, ops) = self.state.apply(&state_key, merged.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -887,7 +877,7 @@ impl SodpServer {
 
                     if let Some(stream_id) = session.watch_stream_id(&state_key) {
                         let wire = frame::delta_bytes(stream_id, 0, &body_mp);
-                        ws_tx.send(Message::Binary(wire.into())).await?;
+                        ws_tx.send(Message::Binary(wire)).await?;
                     }
 
                     if let Some(cluster) = &self.cluster {
@@ -902,7 +892,7 @@ impl SodpServer {
                         seq,
                         &call_id,
                         Some(serde_json::json!({ "version": version })),
-                    ).encode()?.into()
+                    ).encode()?
                 )).await?;
             }
 
@@ -914,7 +904,7 @@ impl SodpServer {
                     None => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, "state.set_in: missing 'state' key").encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, "state.set_in: missing 'state' key").encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -925,7 +915,7 @@ impl SodpServer {
                     None => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, "state.set_in: missing 'path' key").encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, "state.set_in: missing 'path' key").encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -940,21 +930,20 @@ impl SodpServer {
                     Err(msg) => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, &msg).encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, &msg).encode()?
                         )).await?;
                         return Ok(());
                     }
                 };
 
-                if let Some(schema) = &self.schema {
-                    if let Err(msg) = schema.validate(&state_key, &updated) {
+                if let Some(schema) = &self.schema
+                    && let Err(msg) = schema.validate(&state_key, &updated) {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 422, &msg).encode()?.into()
+                            frame::error(frame.stream_id, seq, 422, &msg).encode()?
                         )).await?;
                         return Ok(());
                     }
-                }
 
                 let (version, ops) = self.state.apply(&state_key, updated.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -963,7 +952,7 @@ impl SodpServer {
                     broadcast_timed(&self.fanout, &state_key, &body_mp, Some(&session.id));
                     if let Some(stream_id) = session.watch_stream_id(&state_key) {
                         let wire = frame::delta_bytes(stream_id, 0, &body_mp);
-                        ws_tx.send(Message::Binary(wire.into())).await?;
+                        ws_tx.send(Message::Binary(wire)).await?;
                     }
 
                     if let Some(cluster) = &self.cluster {
@@ -976,7 +965,7 @@ impl SodpServer {
                     frame::result_ok(
                         frame.stream_id, seq, &call_id,
                         Some(serde_json::json!({ "version": version })),
-                    ).encode()?.into()
+                    ).encode()?
                 )).await?;
             }
 
@@ -988,7 +977,7 @@ impl SodpServer {
                     None => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, "state.delete: missing 'state' key").encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, "state.delete: missing 'state' key").encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -1002,7 +991,7 @@ impl SodpServer {
                         broadcast_timed(&self.fanout, &state_key, &body_mp, Some(&session.id));
                         if let Some(stream_id) = session.watch_stream_id(&state_key) {
                             let wire = frame::delta_bytes(stream_id, 0, &body_mp);
-                            ws_tx.send(Message::Binary(wire.into())).await?;
+                            ws_tx.send(Message::Binary(wire)).await?;
                         }
                         if let Some(cluster) = &self.cluster {
                             cluster.sync_delete(state_key.clone(), body_mp);
@@ -1017,7 +1006,7 @@ impl SodpServer {
                     frame::result_ok(
                         frame.stream_id, seq, &call_id,
                         Some(serde_json::json!({ "version": version })),
-                    ).encode()?.into()
+                    ).encode()?
                 )).await?;
             }
 
@@ -1031,7 +1020,7 @@ impl SodpServer {
                     None => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, "state.presence: missing 'state' key").encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, "state.presence: missing 'state' key").encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -1042,7 +1031,7 @@ impl SodpServer {
                     None => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, "state.presence: missing 'path' key").encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, "state.presence: missing 'path' key").encode()?
                         )).await?;
                         return Ok(());
                     }
@@ -1056,21 +1045,20 @@ impl SodpServer {
                     Err(msg) => {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 400, &msg).encode()?.into()
+                            frame::error(frame.stream_id, seq, 400, &msg).encode()?
                         )).await?;
                         return Ok(());
                     }
                 };
 
-                if let Some(schema) = &self.schema {
-                    if let Err(msg) = schema.validate(&state_key, &updated) {
+                if let Some(schema) = &self.schema
+                    && let Err(msg) = schema.validate(&state_key, &updated) {
                         let seq = session.next_seq();
                         ws_tx.send(Message::Binary(
-                            frame::error(frame.stream_id, seq, 422, &msg).encode()?.into()
+                            frame::error(frame.stream_id, seq, 422, &msg).encode()?
                         )).await?;
                         return Ok(());
                     }
-                }
 
                 let (version, ops) = self.state.apply(&state_key, updated.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -1079,7 +1067,7 @@ impl SodpServer {
                     broadcast_timed(&self.fanout, &state_key, &body_mp, Some(&session.id));
                     if let Some(stream_id) = session.watch_stream_id(&state_key) {
                         let wire = frame::delta_bytes(stream_id, 0, &body_mp);
-                        ws_tx.send(Message::Binary(wire.into())).await?;
+                        ws_tx.send(Message::Binary(wire)).await?;
                     }
 
                     if let Some(cluster) = &self.cluster {
@@ -1095,7 +1083,7 @@ impl SodpServer {
                     frame::result_ok(
                         frame.stream_id, seq, &call_id,
                         Some(serde_json::json!({ "version": version })),
-                    ).encode()?.into()
+                    ).encode()?
                 )).await?;
             }
 
@@ -1108,7 +1096,7 @@ impl SodpServer {
                         seq,
                         404,
                         &format!("unknown method: {unknown}"),
-                    ).encode()?.into()
+                    ).encode()?
                 )).await?;
             }
         }

@@ -291,7 +291,7 @@ fn check_permission(
 
         //  Claim-based: "KEY:VALUE" 
         p if p.contains(':') => {
-            let (prefix, raw_value) = p.split_once(':').unwrap();
+            let (prefix, raw_value) = p.split_once(':').expect("colon guaranteed by contains check");
 
             // `{sub}` in the value position is a backreference to the captured segment.
             let value: &str = if raw_value == "{sub}" {

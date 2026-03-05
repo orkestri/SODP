@@ -46,10 +46,9 @@ async fn main() -> anyhow::Result<()> {
                 match cluster.load_state().await {
                     Ok(entries) => {
                         // Safe: no tasks spawned yet — only one Arc reference exists.
-                        let mut inner = match Arc::try_unwrap(server) {
-                            Ok(s)  => s,
-                            Err(_) => panic!("unexpected extra Arc reference before task spawn"),
-                        };
+                        let mut inner = Arc::try_unwrap(server).unwrap_or_else(|_| {
+                            unreachable!("no tasks spawned yet — Arc must have exactly one reference")
+                        });
                         inner.state.load_entries(entries);
                         cluster.clone().spawn_subscriber(
                             Arc::clone(&inner.fanout),
@@ -66,18 +65,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Health check server (SODP_HEALTH_PORT, e.g. 7778)
-    if let Ok(port_str) = std::env::var("SODP_HEALTH_PORT") {
-        if let Ok(port) = port_str.parse::<u16>() {
+    if let Ok(port_str) = std::env::var("SODP_HEALTH_PORT")
+        && let Ok(port) = port_str.parse::<u16>() {
             let connections = Arc::clone(&server.connections);
             let token = shutdown.clone();
             tokio::spawn(run_health_server(port, connections, token));
         }
-    }
 
     // Prometheus metrics server (SODP_METRICS_PORT, e.g. 9090).
     // If unset, the metrics crate uses its built-in no-op recorder — zero overhead.
-    if let Ok(port_str) = std::env::var("SODP_METRICS_PORT") {
-        if let Ok(port) = port_str.parse::<u16>() {
+    if let Ok(port_str) = std::env::var("SODP_METRICS_PORT")
+        && let Ok(port) = port_str.parse::<u16>() {
             match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
                 Ok(handle) => {
                     info!("Prometheus metrics on 0.0.0.0:{port}");
@@ -86,7 +84,6 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => error!("Failed to install Prometheus recorder: {e}"),
             }
         }
-    }
 
     // Graceful shutdown on Ctrl-C or SIGTERM
     let token = shutdown.clone();

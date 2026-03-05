@@ -1,18 +1,18 @@
-/// Redis-backed horizontal scaling for SODP.
-///
-/// When `SODP_REDIS_URL` is set, the server:
-///   1. On startup — loads all persisted state from Redis into the local `StateStore`.
-///   2. On every mutation — fires a background task that writes the new value to Redis
-///      (`HSET sodp:state`) and publishes an encoded delta to all peer nodes
-///      (`PUBLISH sodp:delta:{key}`).
-///   3. Runs a background subscriber that listens for deltas from other nodes and
-///      delivers them to local watchers via `FanoutBus`.
-///
-/// Design constraints:
-///   - Sync is fire-and-forget (no latency added to the mutation hot path).
-///   - `MultiplexedConnection::clone()` allows concurrent async commands without a `Mutex`.
-///   - The Pub/Sub subscriber requires a dedicated connection (Redis protocol restriction).
-///   - Cross-node RESUME falls back to STATE_INIT — same graceful path as local eviction.
+//! Redis-backed horizontal scaling for SODP.
+//!
+//! When `SODP_REDIS_URL` is set, the server:
+//!   1. On startup — loads all persisted state from Redis into the local `StateStore`.
+//!   2. On every mutation — fires a background task that writes the new value to Redis
+//!      (`HSET sodp:state`) and publishes an encoded delta to all peer nodes
+//!      (`PUBLISH sodp:delta:{key}`).
+//!   3. Runs a background subscriber that listens for deltas from other nodes and
+//!      delivers them to local watchers via `FanoutBus`.
+//!
+//! Design constraints:
+//!   - Sync is fire-and-forget (no latency added to the mutation hot path).
+//!   - `MultiplexedConnection::clone()` allows concurrent async commands without a `Mutex`.
+//!   - The Pub/Sub subscriber requires a dedicated connection (Redis protocol restriction).
+//!   - Cross-node RESUME falls back to STATE_INIT — same graceful path as local eviction.
 
 use std::sync::Arc;
 use std::time::Duration;

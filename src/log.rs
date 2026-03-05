@@ -71,13 +71,11 @@ fn list_segments(log_dir: &Path) -> anyhow::Result<Vec<u64>> {
     let mut nums = Vec::new();
     for e in fs::read_dir(log_dir)? {
         let name = e?.file_name().into_string().unwrap_or_default();
-        if let Some(rest) = name.strip_prefix(SEGMENT_PREFIX) {
-            if let Some(num_str) = rest.strip_suffix(SEGMENT_SUFFIX) {
-                if let Ok(n) = num_str.parse::<u64>() {
+        if let Some(rest) = name.strip_prefix(SEGMENT_PREFIX)
+            && let Some(num_str) = rest.strip_suffix(SEGMENT_SUFFIX)
+                && let Ok(n) = num_str.parse::<u64>() {
                     nums.push(n);
                 }
-            }
-        }
     }
     nums.sort_unstable();
     Ok(nums)
