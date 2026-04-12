@@ -18,6 +18,18 @@ from typing import Any
 _KNOWN_OPS = frozenset({"ADD", "UPDATE", "REMOVE"})
 
 
+def _container_for(segment: str) -> Any:
+    """Pick the right empty container for a path segment.
+
+    RFC 6901 ``"-"`` and any purely-numeric segment imply a list; anything
+    else implies a dict. Used when the current node is ``None``/non-container
+    and we have to materialise something to descend into.
+    """
+    if segment == "-" or (segment and segment.isdigit()):
+        return []
+    return {}
+
+
 def apply_ops(state: Any, ops: list[dict]) -> Any:
     """Return the new state after applying *ops* in order. Does not mutate *state*.
 
@@ -46,26 +58,36 @@ def _apply_one(state: Any, op: dict) -> Any:
     if not parts:
         return None if kind == "REMOVE" else op.get("value")
 
-    # Deep-clone the container so callers keep immutability guarantees.
-    # Non-container state at a non-root path is coerced to an empty dict.
+    # Deep-clone the container so callers keep immutability guarantees. If
+    # state is None/non-container, seed a fresh container whose type is
+    # implied by the first path segment — "-" or a numeric index means the
+    # root should be a list, anything else means a dict. This matters when
+    # subscribing to a key before its first value has been written.
     if isinstance(state, (dict, list)):
         root: Any = copy.deepcopy(state)
     else:
-        root = {}
+        root = _container_for(parts[0])
 
-    # Walk to the parent node, materialising intermediate dicts as needed.
+    # Walk to the parent node, materialising intermediate containers as
+    # needed. The shape of each materialised intermediate is chosen by the
+    # *next* path segment: "-" or numeric implies list, otherwise dict.
     node: Any = root
-    for key in parts[:-1]:
+    for i, key in enumerate(parts[:-1]):
+        next_seg = parts[i + 1]
         if isinstance(node, list):
             idx = _as_index(key)
             if idx is None or not (0 <= idx < len(node)):
                 # Non-indexable segment on a list — nothing we can sensibly do.
                 return root
-            node = node[idx]
+            child = node[idx]
+            if not isinstance(child, (dict, list)):
+                child = _container_for(next_seg)
+                node[idx] = child
+            node = child
         else:
             child = node.get(key) if isinstance(node, dict) else None
             if not isinstance(child, (dict, list)):
-                child = {}
+                child = _container_for(next_seg)
                 if isinstance(node, dict):
                     node[key] = child
             node = child

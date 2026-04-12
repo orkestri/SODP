@@ -170,3 +170,35 @@ def test_unknown_op_type_raises():
 def test_completely_unknown_op_type_raises():
     with pytest.raises(ValueError, match="unknown delta op type"):
         apply_ops({"x": 1}, [{"op": "FOO", "path": "/x", "value": 99}])
+
+
+# ── Brokoli regression: None state + array paths ──────────────────────────────
+# Reported after 0.2.0. Before this fix, ADD "/-" on None state produced
+# {"-": value} because the root fallback was always {} regardless of the path.
+
+def test_add_append_on_none_initializes_root_list():
+    assert apply_ops(None, [{"op": "ADD", "path": "/-", "value": "x"}]) == ["x"]
+
+
+def test_add_numeric_index_on_none_initializes_root_list():
+    assert apply_ops(None, [{"op": "ADD", "path": "/0", "value": "x"}]) == ["x"]
+
+
+def test_add_nested_append_on_none_materializes_nested_list():
+    result = apply_ops(None, [{"op": "ADD", "path": "/items/-", "value": "x"}])
+    assert result == {"items": ["x"]}
+
+
+def test_consecutive_appends_on_none_grow_a_list():
+    state = None
+    state = apply_ops(state, [{"op": "ADD", "path": "/-", "value": "a"}])
+    state = apply_ops(state, [{"op": "ADD", "path": "/-", "value": "b"}])
+    state = apply_ops(state, [{"op": "ADD", "path": "/-", "value": "c"}])
+    assert state == ["a", "b", "c"]
+
+
+def test_object_path_on_none_still_materializes_a_dict():
+    # Sanity: the list-preference must not leak into object paths.
+    assert apply_ops(None, [{"op": "ADD", "path": "/name", "value": "Alice"}]) == {
+        "name": "Alice",
+    }
