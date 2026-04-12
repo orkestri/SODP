@@ -34,6 +34,17 @@ function parsePath(path: string): string[] {
 
 const KNOWN_OPS = new Set(["ADD", "UPDATE", "REMOVE"]);
 
+/**
+ * Decide whether a new container should be an array or an object, based on
+ * the path segment that will index into it next. RFC 6901 "-" and any
+ * purely-numeric segment imply an array; anything else implies an object.
+ */
+function containerFor(nextSegment: string): Record<string, unknown> | unknown[] {
+  if (nextSegment === "-") return [];
+  if (nextSegment.length > 0 && /^\d+$/.test(nextSegment)) return [];
+  return {};
+}
+
 // ── Op application ─────────────────────────────────────────────────────────────
 
 /**
@@ -62,20 +73,38 @@ function applyOp(state: unknown, op: DeltaOp): unknown {
     return (op as { value: unknown }).value;
   }
 
-  // Clone so callers keep immutability guarantees.
-  const root = (
-    typeof state === "object" && state !== null
-      ? deepClone(state)
-      : {}
-  ) as Record<string, unknown>;
+  // Clone so callers keep immutability guarantees. When state is a non-container
+  // (null/undefined/scalar), seed a fresh container whose type is implied by the
+  // first path segment — "-" or a numeric index means the root should be an
+  // array, anything else means it should be an object. This matters when
+  // subscribing to a key before its first value has been written on the server.
+  const root: unknown = (typeof state === "object" && state !== null)
+    ? deepClone(state)
+    : containerFor(parts[0]);
 
-  // Navigate to the parent node, creating intermediate objects as needed.
+  // Navigate to the parent node, creating intermediate containers as needed.
+  // The shape of each materialised intermediate is chosen by looking at the
+  // *next* path segment: "-" or numeric implies array, otherwise object.
   let node: unknown = root;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
+    if (Array.isArray(node)) {
+      const idx = Number(key);
+      if (Number.isNaN(idx) || idx < 0 || idx >= node.length) {
+        // Non-indexable or out-of-range segment on an array — nothing to do.
+        return root;
+      }
+      let child = (node as unknown[])[idx];
+      if (typeof child !== "object" || child === null) {
+        child = containerFor(parts[i + 1]);
+        (node as unknown[])[idx] = child;
+      }
+      node = child;
+      continue;
+    }
     const parent = node as Record<string, unknown>;
     if (typeof parent[key] !== "object" || parent[key] === null) {
-      parent[key] = {};
+      parent[key] = containerFor(parts[i + 1]);
     }
     node = parent[key];
   }

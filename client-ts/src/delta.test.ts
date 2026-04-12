@@ -122,4 +122,43 @@ describe("applyOps", () => {
       applyOps({ x: 1 }, [{ op: "FOO" as unknown as "ADD", path: "/x", value: 99 }]),
     ).toThrow(/unknown delta op type/);
   });
+
+  // ── Brokoli regression: null/undefined state + array paths ─────────────────
+  // https://github.com/orkestri/SODP/issues — reported after 0.2.0.
+  // Before this fix, ADD "/-" on null state produced {"-": value} because the
+  // root fallback was always {} regardless of the path shape.
+
+  it("ADD /- on null state initializes a root array", () => {
+    expect(applyOps(null, [{ op: "ADD", path: "/-", value: "x" }])).toEqual(["x"]);
+  });
+
+  it("ADD /- on undefined state initializes a root array", () => {
+    expect(applyOps(undefined, [{ op: "ADD", path: "/-", value: "x" }])).toEqual(["x"]);
+  });
+
+  it("ADD /0 on null state initializes a root array", () => {
+    expect(applyOps(null, [{ op: "ADD", path: "/0", value: "x" }])).toEqual(["x"]);
+  });
+
+  it("ADD /items/- on null state materializes nested array", () => {
+    expect(
+      applyOps(null, [{ op: "ADD", path: "/items/-", value: "x" }]),
+    ).toEqual({ items: ["x"] });
+  });
+
+  it("consecutive appends on a key that starts null grow an array", () => {
+    // Simulates: STATE_INIT delivers value: null, then three DELTA ADDs arrive.
+    let state: unknown = null;
+    state = applyOps(state, [{ op: "ADD", path: "/-", value: "a" }]);
+    state = applyOps(state, [{ op: "ADD", path: "/-", value: "b" }]);
+    state = applyOps(state, [{ op: "ADD", path: "/-", value: "c" }]);
+    expect(state).toEqual(["a", "b", "c"]);
+  });
+
+  it("object path on null state still materializes an object", () => {
+    // Sanity check: the array-preference must not leak into object paths.
+    expect(applyOps(null, [{ op: "ADD", path: "/name", value: "Alice" }])).toEqual({
+      name: "Alice",
+    });
+  });
 });
