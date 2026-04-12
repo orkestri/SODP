@@ -32,6 +32,9 @@ public class WatchEntry {
     /** Most recent full value from STATE_INIT or accumulated from DELTAs. */
     public volatile JsonNode cachedValue = null;
 
+    /** Opaque params attached to this subscription (echoed in STATE_INIT). */
+    public volatile java.util.Map<String, Object> params = null;
+
     /**
      * Registered callbacks.  {@link CopyOnWriteArrayList} lets the receive
      * thread iterate without locking while user threads add/remove callbacks.
