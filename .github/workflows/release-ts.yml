@@ -33,7 +33,17 @@ jobs:
 
       - name: Publish @sodp/client
         working-directory: client-ts
-        run: npm publish
+        # Idempotent: if this tag is re-pushed after a partial failure and
+        # the version is already on the registry, skip instead of crashing
+        # the job with E409. Any other publish error still fails the step.
+        run: |
+          set -e
+          version=$(node -p "require('./package.json').version")
+          if npm view "@sodp/client@${version}" version > /dev/null 2>&1; then
+            echo "@sodp/client@${version} is already on npm — skipping publish."
+          else
+            npm publish
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -48,6 +58,13 @@ jobs:
 
       - name: Publish @sodp/react
         working-directory: react-sodp
-        run: npm publish
+        run: |
+          set -e
+          version=$(node -p "require('./package.json').version")
+          if npm view "@sodp/react@${version}" version > /dev/null 2>&1; then
+            echo "@sodp/react@${version} is already on npm — skipping publish."
+          else
+            npm publish
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
