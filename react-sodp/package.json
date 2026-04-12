@@ -1,6 +1,6 @@
 {
   "name": "@sodp/react",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "React hooks for the State-Oriented Data Protocol",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -33,7 +33,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@sodp/client": "^0.1.0",
+    "@sodp/client": "^0.2.0",
     "react": ">=17"
   },
   "devDependencies": {
