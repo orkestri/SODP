@@ -179,6 +179,9 @@ The callback receives:
 - `value` — deserialized as `T`, or raw `JsonNode`
 - `meta.version()` — monotonically increasing version (`long`)
 - `meta.initialized()` — `false` when the key has never been written
+- `meta.source()` — `WatchSource.CACHE`, `WatchSource.INIT`, or `WatchSource.DELTA`,
+  identifying which event produced this callback. Use this — not `initialized()` —
+  to distinguish the initial baseline from subsequent mutations.
 
 Multiple `watch()` calls for the same key share a single server subscription.
 

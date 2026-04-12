@@ -66,6 +66,7 @@ public final class SodpClient {
 
     private volatile boolean          authenticated = false;
     private volatile boolean          closed        = false;
+    private volatile JsonNode         capabilities;
 
     /** Completes when first authenticated (or on HELLO with auth:false). */
     private final CompletableFuture<Void> readyFuture = new CompletableFuture<>();
@@ -224,12 +225,16 @@ public final class SodpClient {
         entry.streamId = streamId;
         streamToKey.put(streamId, key);
 
-        byte[] frame = entry.version > 0
-                ? Frames.encode(FrameTypes.RESUME, streamId, nextSeq(),
-                        mapOf("state", key, "since_version", entry.version))
-                : Frames.encode(FrameTypes.WATCH, streamId, nextSeq(),
-                        mapOf("state", key));
-        enqueue(frame);
+        Map<String, Object> body;
+        if (entry.version > 0) {
+            body = new LinkedHashMap<>(mapOf("state", key, "since_version", entry.version));
+            if (entry.params != null) body.put("params", entry.params);
+            enqueue(Frames.encode(FrameTypes.RESUME, streamId, nextSeq(), body));
+        } else {
+            body = new LinkedHashMap<>(mapOf("state", key));
+            if (entry.params != null) body.put("params", entry.params);
+            enqueue(Frames.encode(FrameTypes.WATCH, streamId, nextSeq(), body));
+        }
     }
 
     // ── WebSocket listener ────────────────────────────────────────────────────
@@ -293,7 +298,13 @@ public final class SodpClient {
         }
     }
 
+    /** Server-advertised capabilities from the HELLO frame. */
+    public JsonNode capabilities() { return capabilities; }
+
     private void onHello(Frames.DecodedFrame f) {
+        if (f.body() != null) {
+            capabilities = f.body().path("capabilities");
+        }
         boolean authRequired = f.body() != null && f.body().path("auth").asBoolean(false);
         if (authRequired) {
             String token = resolveToken();
@@ -326,7 +337,7 @@ public final class SodpClient {
 
         entry.streamId = f.streamId();
         entry.update(version, initialized, value);
-        fireAll(entry, value, new WatchMeta(version, initialized));
+        fireAll(entry, value, new WatchMeta(version, initialized, WatchSource.INIT));
     }
 
     private void onDelta(Frames.DecodedFrame f) {
@@ -345,7 +356,7 @@ public final class SodpClient {
         JsonNode      after = DeltaApplier.applyOps(entry.cachedValue, ops);
 
         entry.update(version, true, after);
-        fireAll(entry, after, new WatchMeta(version, true));
+        fireAll(entry, after, new WatchMeta(version, true, WatchSource.DELTA));
     }
 
     private void onResult(Frames.DecodedFrame f) {
@@ -417,7 +428,7 @@ public final class SodpClient {
         // Fire immediately if we already have a cached value.
         JsonNode cached = entry.cachedValue;
         if (cached != null) {
-            fireOne(cb, cached, new WatchMeta(entry.version, entry.initialized));
+            fireOne(cb, cached, new WatchMeta(entry.version, entry.initialized, WatchSource.CACHE));
         }
 
         // Subscribe if connected and this key has no active stream yet.
@@ -430,10 +441,62 @@ public final class SodpClient {
     }
 
     /**
+     * Subscribe to a state key with params; values are delivered as the specified type.
+     *
+     * @param params opaque metadata attached to the subscription, echoed in STATE_INIT
+     */
+    public <T> Runnable watch(String key, Class<T> type, WatchCallback<T> callback, Map<String, Object> params) {
+        WatchEntry entry = watches.computeIfAbsent(key, k -> new WatchEntry());
+        entry.params = params;
+        return watch(key, type, callback);
+    }
+
+    /**
      * Subscribe to a state key; values are delivered as raw {@link JsonNode}.
      */
     public Runnable watch(String key, WatchCallback<JsonNode> callback) {
         return watch(key, JsonNode.class, callback);
+    }
+
+    /**
+     * Subscribe to multiple state keys in a single server frame.
+     *
+     * <p>The callback fires for each key individually whenever its value
+     * changes.  Returns a single unsubscribe handle that removes all
+     * subscriptions.
+     *
+     * @param keys     the state keys to watch
+     * @param type     the value type for JSON deserialization
+     * @param callback invoked on every STATE_INIT and DELTA per key
+     * @return an unsubscribe handle
+     */
+    public <T> Runnable watchMany(List<String> keys, Class<T> type, WatchCallback<T> callback) {
+        return watchMany(keys, type, callback, null);
+    }
+
+    /**
+     * Subscribe to multiple state keys with params.
+     */
+    public <T> Runnable watchMany(List<String> keys, Class<T> type, WatchCallback<T> callback, Map<String, Object> params) {
+        List<Runnable> unsubs = new ArrayList<>();
+        for (String key : keys) {
+            WatchEntry entry = watches.computeIfAbsent(key, k -> new WatchEntry());
+            if (params != null) entry.params = params;
+            CallbackEntry<T> cb = new CallbackEntry<>(type, callback, mapper);
+            entry.addCallback(cb);
+            unsubs.add(() -> entry.removeCallback(cb));
+        }
+
+        // Send a single multi-key WATCH frame.
+        if (authenticated) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("states", keys);
+            if (params != null) body.put("params", params);
+            int streamId = nextStreamId.getAndIncrement();
+            enqueue(Frames.encode(FrameTypes.WATCH, streamId, nextSeq(), body));
+        }
+
+        return () -> { for (Runnable unsub : unsubs) unsub.run(); };
     }
 
     /**
@@ -608,7 +671,9 @@ public final class SodpClient {
             ops.add(switch (op) {
                 case "ADD"    -> new DeltaOp.Add(path, val.isMissingNode() ? null : val);
                 case "UPDATE" -> new DeltaOp.Update(path, val.isMissingNode() ? null : val);
-                default       -> new DeltaOp.Remove(path);
+                case "REMOVE" -> new DeltaOp.Remove(path);
+                default       -> throw new SodpException(
+                    "unknown delta op type: \"" + op + "\". Expected one of: ADD, UPDATE, REMOVE");
             });
         }
         return ops;

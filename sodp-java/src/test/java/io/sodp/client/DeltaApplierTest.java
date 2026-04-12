@@ -134,4 +134,78 @@ class DeltaApplierTest {
 
         assertSame(state, result, "empty ops should return the exact same reference");
     }
+
+    // 11 ── RFC 6901 "-" array append ──────────────────────────────────────────
+
+    @Test
+    void add_append_to_root_array() throws Exception {
+        JsonNode state  = json("[1,2,3]");
+        JsonNode result = DeltaApplier.applyOps(state, List.of(new DeltaOp.Add("/-", 4)));
+
+        assertTrue(result.isArray());
+        assertEquals(4, result.size());
+        assertEquals(4, result.get(3).asInt());
+    }
+
+    @Test
+    void add_append_to_nested_array() throws Exception {
+        JsonNode state  = json("{\"items\":[{\"id\":1}]}");
+        JsonNode result = DeltaApplier.applyOps(state,
+                List.of(new DeltaOp.Add("/items/-", MAPPER.readTree("{\"id\":2}"))));
+
+        JsonNode items = result.path("items");
+        assertTrue(items.isArray());
+        assertEquals(2, items.size());
+        assertEquals(2, items.get(1).path("id").asInt());
+    }
+
+    @Test
+    void multiple_appends_apply_in_order() throws Exception {
+        JsonNode state = MAPPER.createArrayNode();
+        List<DeltaOp> ops = List.of(
+                new DeltaOp.Add("/-", "a"),
+                new DeltaOp.Add("/-", "b"),
+                new DeltaOp.Add("/-", "c")
+        );
+        JsonNode result = DeltaApplier.applyOps(state, ops);
+
+        assertEquals(3, result.size());
+        assertEquals("a", result.get(0).asText());
+        assertEquals("b", result.get(1).asText());
+        assertEquals("c", result.get(2).asText());
+    }
+
+    // 12 ── Numeric array indices ──────────────────────────────────────────────
+
+    @Test
+    void update_by_numeric_index_into_array() throws Exception {
+        JsonNode state  = json("[1,2,3]");
+        JsonNode result = DeltaApplier.applyOps(state, List.of(new DeltaOp.Update("/1", 99)));
+
+        assertEquals(1, result.get(0).asInt());
+        assertEquals(99, result.get(1).asInt());
+        assertEquals(3, result.get(2).asInt());
+    }
+
+    @Test
+    void remove_by_numeric_index_splices_array() throws Exception {
+        JsonNode state  = json("[1,2,3]");
+        JsonNode result = DeltaApplier.applyOps(state, List.of(new DeltaOp.Remove("/1")));
+
+        assertEquals(2, result.size());
+        assertEquals(1, result.get(0).asInt());
+        assertEquals(3, result.get(1).asInt());
+    }
+
+    // 13 ── Array ops preserve immutability ────────────────────────────────────
+
+    @Test
+    void array_append_does_not_mutate_original() throws Exception {
+        JsonNode state  = json("[1,2,3]");
+        JsonNode before = state.deepCopy();
+
+        DeltaApplier.applyOps(state, List.of(new DeltaOp.Add("/-", 4)));
+
+        assertEquals(before, state, "original array must not be mutated");
+    }
 }
