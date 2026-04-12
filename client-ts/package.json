@@ -1,12 +1,22 @@
 {
   "name": "@sodp/client",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "TypeScript client library for the State-Oriented Data Protocol",
   "main": "dist/index.js",
+  "module": "dist/esm/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": ["dist"],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.esm.json && node -e \"require('fs').writeFileSync('dist/esm/package.json', '{\\\"type\\\":\\\"module\\\"}')\"",
     "test": "jest"
   },
   "keywords": ["sodp", "realtime", "state-sync", "websocket"],

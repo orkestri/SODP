@@ -1,6 +1,10 @@
 import { encode, decode } from "@msgpack/msgpack";
 import { applyOps, type DeltaOp } from "./delta.js";
 
+// Re-export delta helpers so server implementors and test authors can import
+// them directly from the package root: `import { applyOps } from "@sodp/client"`
+export { applyOps, type DeltaOp } from "./delta.js";
+
 // ── Frame type constants ───────────────────────────────────────────────────────
 
 const HELLO      = 0x01;
@@ -22,6 +26,17 @@ export interface WatchMeta {
   version:     number;
   /** false when the key has never been written to the server. */
   initialized: boolean;
+  /**
+   * Origin of this callback invocation:
+   *  - `"cache"` — fired synchronously from `watch()` with the already-cached value
+   *  - `"init"`  — the server's STATE_INIT frame (initial load or post-reconnect baseline)
+   *  - `"delta"` — an incremental DELTA frame (an actual mutation)
+   *
+   * Use this to distinguish the initial baseline from subsequent changes, e.g.
+   * for event-stream patterns where you only want to process new entries after
+   * the first load.
+   */
+  source: "cache" | "init" | "delta";
 }
 
 export type WatchCallback<T> = (value: T | null, meta: WatchMeta) => void;
@@ -79,6 +94,7 @@ interface WatchEntry {
   version:     number;
   value:       unknown;
   initialized: boolean;
+  params?:     Record<string, unknown>;
 }
 
 interface PendingCall {
@@ -129,6 +145,8 @@ export class SodpClient {
   private streamToKey: Map<number, string> = new Map();
   /** call_id → pending promise */
   private readonly pendingCalls: Map<string, PendingCall> = new Map();
+
+  private _capabilities: Record<string, unknown> = {};
 
   private nextStreamId = 10;
   private nextSeq      = 0;
@@ -224,7 +242,11 @@ export class SodpClient {
     }
   }
 
-  private async onHello(body: { auth: boolean }): Promise<void> {
+  /** Server-advertised capabilities from the HELLO frame. */
+  get capabilities(): Record<string, unknown> { return this._capabilities; }
+
+  private async onHello(body: { auth: boolean; capabilities?: Record<string, unknown> }): Promise<void> {
+    this._capabilities = body.capabilities ?? {};
     if (body.auth) {
       let token: string | undefined;
       if (this.opts.tokenProvider) {
@@ -258,9 +280,9 @@ export class SodpClient {
     for (const [key, entry] of this.watches) {
       if (entry.callbacks.size === 0) continue;
       if (entry.version > 0) {
-        this.sendResume(key, entry.version);
+        this.sendResume(key, entry.version, entry.params);
       } else {
-        this.sendWatch(key);
+        this.sendWatch(key, entry.params);
       }
     }
 
@@ -289,7 +311,7 @@ export class SodpClient {
     entry.value       = body.value;
     entry.initialized = body.initialized;
 
-    const meta = { version: body.version, initialized: body.initialized };
+    const meta: WatchMeta = { version: body.version, initialized: body.initialized, source: "init" };
     for (const cb of entry.callbacks) cb(body.value, meta);
   }
 
@@ -306,7 +328,7 @@ export class SodpClient {
     const isDeleted = body.ops.some(op => op.op === "REMOVE" && op.path === "/");
     entry.initialized = !isDeleted;
 
-    const meta = { version: body.version, initialized: entry.initialized };
+    const meta: WatchMeta = { version: body.version, initialized: entry.initialized, source: "delta" };
     for (const cb of entry.callbacks) cb(entry.value, meta);
   }
 
@@ -354,15 +376,19 @@ export class SodpClient {
     }
   }
 
-  private sendWatch(key: string): void {
+  private sendWatch(key: string, params?: Record<string, unknown>): void {
     // stream_id is arbitrary here — server will allocate its own and echo it
     // back in STATE_INIT body.state, which is where we populate streamToKey.
-    this.send(WATCH, this.nextStreamId++, { state: key });
+    const body: Record<string, unknown> = { state: key };
+    if (params) body.params = params;
+    this.send(WATCH, this.nextStreamId++, body);
   }
 
-  private sendResume(key: string, sinceVersion: number): void {
+  private sendResume(key: string, sinceVersion: number, params?: Record<string, unknown>): void {
     // Same — server echoes the real stream_id in STATE_INIT, not here.
-    this.send(RESUME, this.nextStreamId++, { state: key, since_version: sinceVersion });
+    const body: Record<string, unknown> = { state: key, since_version: sinceVersion };
+    if (params) body.params = params;
+    this.send(RESUME, this.nextStreamId++, body);
   }
 
   // ── Public API ───────────────────────────────────────────────────────────────
@@ -376,24 +402,59 @@ export class SodpClient {
    *
    * Returns an unsubscribe function.
    */
-  watch<T = unknown>(key: string, callback: WatchCallback<T>): () => void {
+  watch<T = unknown>(key: string, callback: WatchCallback<T>, params?: Record<string, unknown>): () => void {
     const cb = callback as WatchCallback<unknown>;
     let entry = this.watches.get(key);
 
     if (!entry) {
-      entry = { key, callbacks: new Set(), version: 0, value: null, initialized: false };
+      entry = { key, callbacks: new Set(), version: 0, value: null, initialized: false, params };
       this.watches.set(key, entry);
-      if (this.authenticated) this.sendWatch(key);
+      if (this.authenticated) this.sendWatch(key, params);
     } else if (entry.initialized) {
       // Fire immediately only when we have a confirmed value from the server.
       // If still waiting for STATE_INIT, the callback will fire when it arrives.
-      cb(entry.value, { version: entry.version, initialized: entry.initialized });
+      cb(entry.value, { version: entry.version, initialized: entry.initialized, source: "cache" });
     }
 
     entry.callbacks.add(cb);
 
     return () => {
       this.watches.get(key)?.callbacks.delete(cb);
+    };
+  }
+
+  /**
+   * Subscribe to multiple state keys in a single frame.
+   *
+   * The callback fires for each key individually whenever its value changes.
+   * Returns a single unsubscribe function that removes all subscriptions.
+   */
+  watchMany<T = unknown>(keys: string[], callback: WatchCallback<T>, params?: Record<string, unknown>): () => void {
+    const cb = callback as WatchCallback<unknown>;
+
+    // Register local watch entries for each key.
+    for (const key of keys) {
+      let entry = this.watches.get(key);
+      if (!entry) {
+        entry = { key, callbacks: new Set(), version: 0, value: null, initialized: false, params };
+        this.watches.set(key, entry);
+      } else if (entry.initialized) {
+        cb(entry.value, { version: entry.version, initialized: entry.initialized, source: "cache" });
+      }
+      entry.callbacks.add(cb);
+    }
+
+    // Send a single multi-key WATCH frame.
+    if (this.authenticated) {
+      const body: Record<string, unknown> = { states: keys };
+      if (params) body.params = params;
+      this.send(WATCH, this.nextStreamId++, body);
+    }
+
+    return () => {
+      for (const key of keys) {
+        this.watches.get(key)?.callbacks.delete(cb);
+      }
     };
   }
 

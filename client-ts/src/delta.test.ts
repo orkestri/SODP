@@ -76,4 +76,50 @@ describe("applyOps", () => {
     const result = applyOps(state, []);
     expect(result).toBe(state); // same reference when no ops
   });
+
+  // ── RFC 6901 array append token "-" ─────────────────────────────────────────
+
+  it("ADD /- appends to a root array", () => {
+    const result = applyOps([1, 2, 3], [{ op: "ADD", path: "/-", value: 4 }]);
+    expect(result).toEqual([1, 2, 3, 4]);
+  });
+
+  it("ADD nested/- appends to a nested array", () => {
+    const state = { items: [{ id: 1 }] };
+    const result = applyOps(state, [{ op: "ADD", path: "/items/-", value: { id: 2 } }]);
+    expect(result).toEqual({ items: [{ id: 1 }, { id: 2 }] });
+  });
+
+  it("multiple /- appends apply in order", () => {
+    const result = applyOps([], [
+      { op: "ADD", path: "/-", value: "a" },
+      { op: "ADD", path: "/-", value: "b" },
+      { op: "ADD", path: "/-", value: "c" },
+    ]);
+    expect(result).toEqual(["a", "b", "c"]);
+  });
+
+  it("ADD by numeric index into an array", () => {
+    const result = applyOps([1, 2, 3], [{ op: "UPDATE", path: "/1", value: 99 }]);
+    expect(result).toEqual([1, 99, 3]);
+  });
+
+  it("REMOVE by numeric index splices the array", () => {
+    const result = applyOps([1, 2, 3], [{ op: "REMOVE", path: "/1" }]);
+    expect(result).toEqual([1, 3]);
+  });
+
+  // ── Unknown op type ─────────────────────────────────────────────────────────
+
+  it("throws on unknown op type (lowercase 'add')", () => {
+    expect(() =>
+      applyOps({ x: 1 }, [{ op: "add" as unknown as "ADD", path: "/x", value: 99 }]),
+    ).toThrow(/unknown delta op type/);
+  });
+
+  it("throws on completely unknown op type", () => {
+    expect(() =>
+      applyOps({ x: 1 }, [{ op: "FOO" as unknown as "ADD", path: "/x", value: 99 }]),
+    ).toThrow(/unknown delta op type/);
+  });
 });

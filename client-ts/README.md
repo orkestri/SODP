@@ -9,6 +9,8 @@ Instead of polling or request/response, SODP streams every change as a minimal d
 
 → [Protocol spec & server](https://github.com/orkestri/SODP) · [React bindings (@sodp/react)](https://www.npmjs.com/package/@sodp/react)
 
+**Implementing a SODP server in another language?** See the [Wire Protocol Reference](https://github.com/orkestri/SODP/blob/main/docs/protocol.md) for the exact frame body schemas for every frame type (`WATCH`, `RESUME`, `STATE_INIT`, `DELTA`, `CALL`, `RESULT`, `ERROR`, `AUTH`, `UNWATCH`, `HEARTBEAT`). The authoritative field names are: `WATCH { state, params?, states? }`, `RESUME { state, since_version, params? }`, `STATE_INIT { state, version, value, initialized }`, `CALL { call_id, method, args }`, `RESULT { call_id, success, data }`.
+
 ---
 
 ## Install
@@ -111,6 +113,12 @@ Subscribe to a state key. `callback(value, meta)` fires on every server-side cha
 - `value` — current state typed as `T`, or `null` if the key has no value yet
 - `meta.version` — monotonically increasing version number
 - `meta.initialized` — `false` when the key has never been written to the server
+- `meta.source` — origin of this callback invocation:
+  - `"cache"` — fired synchronously from `watch()` with an already-cached value
+  - `"init"`  — the server's `STATE_INIT` baseline (initial load or post-reconnect)
+  - `"delta"` — an incremental mutation (`DELTA` frame)
+
+  Use `meta.source` — not `meta.initialized` — to distinguish the initial baseline from subsequent changes. For event-stream patterns (append-only logs, activity feeds) set your baseline on `"init"`/`"cache"` and only process new entries on `"delta"`.
 
 Returns an **unsubscribe function**. Multiple `watch()` calls for the same key share a single server subscription.
 
@@ -238,3 +246,32 @@ No data is lost during short disconnections as long as the server's delta log fo
 | `ref.setIn(path, value)` | Set nested field by JSON Pointer |
 | `ref.delete()` | Remove key from server |
 | `ref.presence(path, value)` | Session-lifetime path binding |
+
+---
+
+## Delta helpers for server implementors
+
+`applyOps` is exported from the package root so server authors and test writers can reuse the exact reducer the client uses:
+
+```ts
+import { applyOps, type DeltaOp } from "@sodp/client";
+
+const next = applyOps([1, 2, 3], [{ op: "ADD", path: "/-", value: 4 }]);
+// → [1, 2, 3, 4]
+```
+
+Supported ops: `"ADD"`, `"UPDATE"`, `"REMOVE"` (uppercase — unknown op types throw). Paths use JSON Pointer (RFC 6901): `"/"` targets the root, `"/a/b"` targets nested fields, `"/-"` appends to an array, and `"/3"` addresses an array index.
+
+**Platform note:** `applyOps` prefers `globalThis.structuredClone` when available (Node 17+, modern browsers) and transparently falls back to `JSON.parse(JSON.stringify(…))` on older runtimes. Values that are not JSON-representable (functions, `Date`, `Map`, `Set`, typed arrays) are not supported in delta payloads.
+
+---
+
+## Package format
+
+`@sodp/client` ships dual CJS + ESM builds with TypeScript declarations:
+
+- CJS:      `dist/index.js`      (`require("@sodp/client")`)
+- ESM:      `dist/esm/index.js`  (`import { SodpClient } from "@sodp/client"`)
+- Types:    `dist/index.d.ts`
+
+The `exports` map resolves the correct variant automatically in Node ESM, bundlers (Vite, webpack, esbuild, Rollup), and TypeScript under both `module: "commonjs"` and `module: "NodeNext"`.
