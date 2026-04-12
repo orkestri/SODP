@@ -35,9 +35,21 @@ _UNWATCH    = 0x0D
 
 @dataclass(frozen=True)
 class WatchMeta:
-    """Metadata delivered alongside every watch callback invocation."""
+    """Metadata delivered alongside every watch callback invocation.
+
+    *source* identifies which event produced the callback:
+
+    * ``"cache"`` — fired synchronously from ``watch()`` with an already-cached value
+    * ``"init"``  — the server's ``STATE_INIT`` baseline (initial load or post-reconnect)
+    * ``"delta"`` — an incremental mutation (``DELTA`` frame)
+
+    Use ``source`` — not ``initialized`` — to distinguish the initial baseline
+    from subsequent changes. The ``initialized`` flag only tells you whether
+    the key has ever been written on the server.
+    """
     version:     int
     initialized: bool
+    source:      str = "delta"
 
 
 WatchCallback = Callable[[Any, WatchMeta], None | Awaitable[None]]
@@ -50,6 +62,7 @@ class _WatchEntry:
     version:     int  = 0
     value:       Any  = None
     initialized: bool = False
+    params:      dict | None = None
 
 
 # ── SodpClient ─────────────────────────────────────────────────────────────────
@@ -109,6 +122,8 @@ class SodpClient:
         self._pending_calls: dict[str, asyncio.Future]   = {}
         self._call_queue:   list[tuple[int, int, Any]]   = []
 
+        self._capabilities: dict[str, Any] = {}
+
         self._next_stream_id = 10
         self._next_seq       = 0
         self._send_queue: asyncio.Queue[bytes] = asyncio.Queue()
@@ -125,6 +140,11 @@ class SodpClient:
     def ready(self) -> Awaitable[None]:
         """Awaitable that resolves once the client is authenticated and ready."""
         return self._ready_event.wait()
+
+    @property
+    def capabilities(self) -> dict[str, Any]:
+        """Server-advertised capabilities from the HELLO frame."""
+        return self._capabilities
 
     # ── Connection lifecycle ──────────────────────────────────────────────────
 
@@ -221,6 +241,7 @@ class SodpClient:
         elif ftype == _HEARTBEAT:  self._send_raw(_HEARTBEAT, 0, None)
 
     async def _on_hello(self, body: dict) -> None:
+        self._capabilities = body.get("capabilities", {})
         if body.get("auth"):
             token: str | None = None
             if self._token_provider is not None:
@@ -250,9 +271,9 @@ class SodpClient:
             if not entry.callbacks:
                 continue
             if entry.version > 0:
-                self._send_resume(key, entry.version)
+                self._send_resume(key, entry.version, entry.params)
             else:
-                self._send_watch(key)
+                self._send_watch(key, entry.params)
 
         # Flush calls queued before authentication.
         for ftype, stream_id, body in self._call_queue:
@@ -274,7 +295,7 @@ class SodpClient:
         entry.value       = body["value"]
         entry.initialized = body["initialized"]
 
-        meta = WatchMeta(version=entry.version, initialized=entry.initialized)
+        meta = WatchMeta(version=entry.version, initialized=entry.initialized, source="init")
         await self._fire_callbacks(entry, entry.value, meta)
 
     async def _on_delta(self, stream_id: int, body: dict) -> None:
@@ -293,7 +314,7 @@ class SodpClient:
         )
         entry.initialized = not is_deleted
 
-        meta = WatchMeta(version=entry.version, initialized=entry.initialized)
+        meta = WatchMeta(version=entry.version, initialized=entry.initialized, source="delta")
         await self._fire_callbacks(entry, entry.value, meta)
 
     def _on_result(self, body: dict) -> None:
@@ -341,20 +362,23 @@ class SodpClient:
         else:
             self._call_queue.append((ftype, stream_id, body))
 
-    def _send_watch(self, key: str) -> None:
-        self._send_raw(_WATCH, self._next_stream_id, {"state": key})
+    def _send_watch(self, key: str, params: dict | None = None) -> None:
+        body: dict[str, Any] = {"state": key}
+        if params is not None:
+            body["params"] = params
+        self._send_raw(_WATCH, self._next_stream_id, body)
         self._next_stream_id += 1
 
-    def _send_resume(self, key: str, since_version: int) -> None:
-        self._send_raw(
-            _RESUME, self._next_stream_id,
-            {"state": key, "since_version": since_version},
-        )
+    def _send_resume(self, key: str, since_version: int, params: dict | None = None) -> None:
+        body: dict[str, Any] = {"state": key, "since_version": since_version}
+        if params is not None:
+            body["params"] = params
+        self._send_raw(_RESUME, self._next_stream_id, body)
         self._next_stream_id += 1
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def watch(self, key: str, callback: WatchCallback) -> Callable[[], None]:
+    def watch(self, key: str, callback: WatchCallback, *, params: dict | None = None) -> Callable[[], None]:
         """
         Subscribe to a state key.
 
@@ -362,18 +386,21 @@ class SodpClient:
         immediately with the cached value if the key is already known.
         It may be a plain function or an ``async`` function.
 
+        *params* is optional opaque metadata attached to the subscription,
+        echoed back in STATE_INIT.
+
         Returns an unsubscribe function that removes only this callback
         (the server subscription stays alive until ``unwatch()``).
         """
         entry = self._watches.get(key)
         if not entry:
-            entry = _WatchEntry(key=key)
+            entry = _WatchEntry(key=key, params=params)
             self._watches[key] = entry
             if self._authenticated:
-                self._send_watch(key)
+                self._send_watch(key, params)
         elif entry.initialized:
             # Fire immediately with the cached snapshot.
-            meta   = WatchMeta(version=entry.version, initialized=True)
+            meta   = WatchMeta(version=entry.version, initialized=True, source="cache")
             result = callback(entry.value, meta)
             if asyncio.iscoroutine(result):
                 asyncio.create_task(result)
@@ -382,6 +409,48 @@ class SodpClient:
 
         def unsub() -> None:
             entry.callbacks.discard(callback)
+
+        return unsub
+
+    def watch_many(
+        self,
+        keys: list[str],
+        callback: WatchCallback,
+        *,
+        params: dict | None = None,
+    ) -> Callable[[], None]:
+        """
+        Subscribe to multiple state keys in a single server frame.
+
+        The *callback* fires for each key individually whenever its value
+        changes.  Returns a single unsubscribe function that removes all
+        subscriptions.
+        """
+        for key in keys:
+            entry = self._watches.get(key)
+            if not entry:
+                entry = _WatchEntry(key=key, params=params)
+                self._watches[key] = entry
+            elif entry.initialized:
+                meta = WatchMeta(version=entry.version, initialized=True, source="cache")
+                result = callback(entry.value, meta)
+                if asyncio.iscoroutine(result):
+                    asyncio.create_task(result)
+            entry.callbacks.add(callback)
+
+        # Send a single multi-key WATCH frame.
+        if self._authenticated:
+            body: dict[str, Any] = {"states": keys}
+            if params is not None:
+                body["params"] = params
+            self._send_raw(_WATCH, self._next_stream_id, body)
+            self._next_stream_id += 1
+
+        def unsub() -> None:
+            for key in keys:
+                entry = self._watches.get(key)
+                if entry:
+                    entry.callbacks.discard(callback)
 
         return unsub
 

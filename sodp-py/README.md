@@ -110,6 +110,12 @@ Subscribe to a state key. `callback(value, meta)` fires on every update and imme
 - `value` — current state (any JSON-compatible type), or `None` if the key has no value yet
 - `meta.version` — monotonically increasing version number (`int`)
 - `meta.initialized` — `False` when the key has never been written to the server
+- `meta.source` — origin of this callback invocation:
+  - `"cache"` — fired synchronously from `watch()` with an already-cached value
+  - `"init"`  — the server's `STATE_INIT` baseline (initial load or post-reconnect)
+  - `"delta"` — an incremental mutation (`DELTA` frame)
+
+  Use `meta.source` — not `meta.initialized` — to distinguish the initial baseline from subsequent changes. `initialized` only tells you whether the key has ever been written on the server.
 
 `callback` may be a plain function or an `async` function.
 

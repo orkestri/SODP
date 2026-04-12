@@ -1,5 +1,7 @@
 """Unit tests for the delta application module."""
 
+import pytest
+
 from sodp.delta import apply_ops, _parse_path
 
 
@@ -118,3 +120,53 @@ def test_does_not_mutate_nested_original():
     state = {"pos": inner}
     apply_ops(state, [{"op": "UPDATE", "path": "/pos/x", "value": 99}])
     assert inner == {"x": 1, "y": 2}
+
+
+# ── RFC 6901 array append token "-" ────────────────────────────────────────────
+
+def test_add_append_to_root_array():
+    result = apply_ops([1, 2, 3], [{"op": "ADD", "path": "/-", "value": 4}])
+    assert result == [1, 2, 3, 4]
+
+
+def test_add_append_to_nested_array():
+    state = {"items": [{"id": 1}]}
+    result = apply_ops(state, [{"op": "ADD", "path": "/items/-", "value": {"id": 2}}])
+    assert result == {"items": [{"id": 1}, {"id": 2}]}
+
+
+def test_multiple_appends_apply_in_order():
+    result = apply_ops([], [
+        {"op": "ADD", "path": "/-", "value": "a"},
+        {"op": "ADD", "path": "/-", "value": "b"},
+        {"op": "ADD", "path": "/-", "value": "c"},
+    ])
+    assert result == ["a", "b", "c"]
+
+
+def test_update_by_numeric_index_into_array():
+    result = apply_ops([1, 2, 3], [{"op": "UPDATE", "path": "/1", "value": 99}])
+    assert result == [1, 99, 3]
+
+
+def test_remove_by_numeric_index_splices_array():
+    result = apply_ops([1, 2, 3], [{"op": "REMOVE", "path": "/1"}])
+    assert result == [1, 3]
+
+
+def test_array_append_does_not_mutate_original():
+    original = [1, 2, 3]
+    apply_ops(original, [{"op": "ADD", "path": "/-", "value": 4}])
+    assert original == [1, 2, 3]
+
+
+# ── Unknown op type ────────────────────────────────────────────────────────────
+
+def test_unknown_op_type_raises():
+    with pytest.raises(ValueError, match="unknown delta op type"):
+        apply_ops({"x": 1}, [{"op": "add", "path": "/x", "value": 99}])
+
+
+def test_completely_unknown_op_type_raises():
+    with pytest.raises(ValueError, match="unknown delta op type"):
+        apply_ops({"x": 1}, [{"op": "FOO", "path": "/x", "value": 99}])
