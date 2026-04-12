@@ -58,11 +58,15 @@ public final class DeltaApplier {
         String[] parts = path.substring(1).split("/", -1);
 
         // Deep-copy the top-level container before any structural mutation.
+        // If state is null or not a container, seed a fresh container whose
+        // shape is implied by the first path segment — "-" or a numeric index
+        // means the root should be an array, anything else means an object.
+        // This matters when subscribing to a key before its first write.
         JsonNode copy;
         if (state != null && (state.isObject() || state.isArray())) {
             copy = state.deepCopy();
         } else {
-            copy = MAPPER.createObjectNode();
+            copy = containerFor(parts[0]);
         }
         return setAt(copy, parts, 0, op);
     }
@@ -76,6 +80,8 @@ public final class DeltaApplier {
             return writeLeaf(node, key, op);
         }
 
+        String nextSeg = parts[idx + 1];
+
         // Descend into an array child.
         if (node instanceof ArrayNode arr) {
             Integer i = parseIndex(key);
@@ -84,6 +90,10 @@ public final class DeltaApplier {
                 return arr;
             }
             JsonNode child = arr.get(i);
+            if (child == null || !(child.isObject() || child.isArray())) {
+                child = containerFor(nextSeg);
+                arr.set(i, child);
+            }
             arr.set(i, setAt(child, parts, idx + 1, op));
             return arr;
         }
@@ -93,8 +103,25 @@ public final class DeltaApplier {
                 ? (ObjectNode) node
                 : MAPPER.createObjectNode();
         JsonNode child = obj.get(key);
+        if (child == null || !(child.isObject() || child.isArray())) {
+            child = containerFor(nextSeg);
+            obj.set(key, child);
+        }
         obj.set(key, setAt(child, parts, idx + 1, op));
         return obj;
+    }
+
+    /**
+     * Build an empty container whose type is implied by {@code segment}:
+     * {@code "-"} or a purely-numeric segment → {@link ArrayNode}, anything
+     * else → {@link ObjectNode}.
+     */
+    private static JsonNode containerFor(String segment) {
+        if ("-".equals(segment)) return MAPPER.createArrayNode();
+        if (segment != null && !segment.isEmpty() && parseIndex(segment) != null) {
+            return MAPPER.createArrayNode();
+        }
+        return MAPPER.createObjectNode();
     }
 
     /** Apply {@code op} to {@code parent} at {@code key} (the final path segment). */

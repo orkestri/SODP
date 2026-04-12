@@ -208,4 +208,54 @@ class DeltaApplierTest {
 
         assertEquals(before, state, "original array must not be mutated");
     }
+
+    // 14 ── Brokoli regression: null state + array paths ──────────────────────
+    // Before this fix, ADD "/-" on null state produced {"-": value} because
+    // the root fallback was always ObjectNode regardless of the path shape.
+
+    @Test
+    void add_append_on_null_state_initializes_root_array() {
+        JsonNode result = DeltaApplier.applyOps(null, List.of(new DeltaOp.Add("/-", "x")));
+        assertTrue(result.isArray(), "root must be an array, not an object");
+        assertEquals(1, result.size());
+        assertEquals("x", result.get(0).asText());
+    }
+
+    @Test
+    void add_numeric_index_on_null_state_initializes_root_array() {
+        JsonNode result = DeltaApplier.applyOps(null, List.of(new DeltaOp.Add("/0", "x")));
+        assertTrue(result.isArray());
+        assertEquals("x", result.get(0).asText());
+    }
+
+    @Test
+    void add_nested_append_on_null_state_materializes_nested_array() {
+        JsonNode result = DeltaApplier.applyOps(null,
+                List.of(new DeltaOp.Add("/items/-", "x")));
+        assertTrue(result.isObject());
+        assertTrue(result.path("items").isArray());
+        assertEquals("x", result.path("items").get(0).asText());
+    }
+
+    @Test
+    void consecutive_appends_on_null_grow_an_array() {
+        JsonNode state = null;
+        state = DeltaApplier.applyOps(state, List.of(new DeltaOp.Add("/-", "a")));
+        state = DeltaApplier.applyOps(state, List.of(new DeltaOp.Add("/-", "b")));
+        state = DeltaApplier.applyOps(state, List.of(new DeltaOp.Add("/-", "c")));
+        assertTrue(state.isArray());
+        assertEquals(3, state.size());
+        assertEquals("a", state.get(0).asText());
+        assertEquals("b", state.get(1).asText());
+        assertEquals("c", state.get(2).asText());
+    }
+
+    @Test
+    void object_path_on_null_state_still_materializes_an_object() {
+        // Sanity: the array-preference must not leak into object paths.
+        JsonNode result = DeltaApplier.applyOps(null,
+                List.of(new DeltaOp.Add("/name", "Alice")));
+        assertTrue(result.isObject());
+        assertEquals("Alice", result.path("name").asText());
+    }
 }
