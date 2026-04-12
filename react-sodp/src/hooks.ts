@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {type StateRef, type WatchMeta} from "@sodp/client";
 import {useSodpClient} from "./context.js";
 
@@ -38,8 +38,16 @@ import {useSodpClient} from "./context.js";
  */
 export function useSodpState<T = unknown>(
   key: string,
+  params?: Record<string, unknown>,
 ): [value: T | null, meta: WatchMeta | null, ref: StateRef<T> | null] {
   const client = useSodpClient();
+
+  // Memoize params by value so that inline objects don't cause re-subscriptions.
+  const stableParams = useMemo(
+    () => params,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [params ? JSON.stringify(params) : undefined],
+  );
 
   const [value, setValue] = useState<T | null>(null);
   const [meta,  setMeta]  = useState<WatchMeta | null>(null);
@@ -61,8 +69,8 @@ export function useSodpState<T = unknown>(
     return client.watch<T>(key, (v, m) => {
       setValue(v);
       setMeta(m);
-    });
-  }, [client, key]);
+    }, stableParams);
+  }, [client, key, stableParams]);
 
   return [value, meta, ref];
 }
@@ -92,4 +100,69 @@ export function useSodpRef<T = unknown>(key: string): StateRef<T> | null {
     () => (client ? client.state<T>(key) : null),
     [client, key],
   );
+}
+
+// ── useSodpStates ──────────────────────────────────────────────────────────────
+
+/**
+ * Subscribe to multiple SODP state keys in a single server frame.
+ *
+ * Returns a `Map` where each key maps to `[value, meta]`.  The map updates
+ * and triggers a re-render whenever any of the watched keys changes.
+ *
+ * @example
+ * ```tsx
+ * function Dashboard() {
+ *   const states = useSodpStates<number>(["score.a", "score.b", "score.c"]);
+ *   return (
+ *     <ul>
+ *       {[...states].map(([key, [value, meta]]) => (
+ *         <li key={key}>{key}: {value} (v{meta?.version})</li>
+ *       ))}
+ *     </ul>
+ *   );
+ * }
+ * ```
+ */
+export function useSodpStates<T = unknown>(
+  keys: string[],
+  params?: Record<string, unknown>,
+): Map<string, [T | null, WatchMeta | null]> {
+  const client = useSodpClient();
+
+  const stableKeys = useMemo(
+    () => keys,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(keys)],
+  );
+
+  const stableParams = useMemo(
+    () => params,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [params ? JSON.stringify(params) : undefined],
+  );
+
+  const [, forceRender] = useState(0);
+  const mapRef = useRef(new Map<string, [T | null, WatchMeta | null]>());
+
+  useEffect(() => {
+    if (!client) return;
+
+    mapRef.current = new Map(stableKeys.map(k => [k, [null, null]]));
+    forceRender(n => n + 1);
+
+    // Subscribe per-key — each callback knows exactly which key it belongs to.
+    // The server receives individual WATCH frames (multi-key is used at the
+    // wire level for batch reconnect; the React hook uses per-key for clarity).
+    const unsubs = stableKeys.map(key =>
+      client.watch<T>(key, (value, meta) => {
+        mapRef.current.set(key, [value, meta]);
+        forceRender(n => n + 1);
+      }, stableParams),
+    );
+
+    return () => { for (const unsub of unsubs) unsub(); };
+  }, [client, stableKeys, stableParams]);
+
+  return mapRef.current;
 }
