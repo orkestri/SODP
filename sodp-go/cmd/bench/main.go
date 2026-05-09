@@ -1,19 +1,30 @@
-// bench is an intensive SODP benchmark with pipelined writers, high watcher
-// counts, duration-based measurement, and live progress reporting.
+// bench is an intensive SODP benchmark that measures writer throughput and
+// watcher fanout latency under configurable load.
 //
-// It can run against either an in-process Go server (default) or any external
-// SODP server via -target, enabling direct comparison between implementations.
+// Two modes:
+//
+//  1. Single run  — fixed writers/watchers, live progress table, detailed summary.
+//  2. Matrix mode — sweeps a watcher list and prints a scaling comparison table.
+//
+// Targets:
+//
+//	In-process Go server (default, labeled clearly).
+//	Any external SODP server via -target (use cmd/sodp-server or the Rust server).
 //
 // Usage:
 //
-//	# Against in-process Go server
+//	# In-process Go server, single run
 //	go run ./cmd/bench
 //
-//	# Against external Rust reference server (start first: cargo run --bin sodp-server -- 0.0.0.0:7777)
+//	# External Rust server
 //	go run ./cmd/bench -target ws://localhost:7777
 //
-//	# Full stress test
-//	go run ./cmd/bench -writers=8 -pipeline=32 -watchers=1000 -duration=30s
+//	# External Go server (start first: go run ./cmd/sodp-server -addr :7778)
+//	go run ./cmd/bench -target ws://localhost:7778
+//
+//	# Scaling matrix (sweeps watcher counts, compares throughput/latency)
+//	go run ./cmd/bench -matrix
+//	go run ./cmd/bench -matrix -target ws://localhost:7777
 package main
 
 import (
@@ -26,6 +37,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,20 +52,25 @@ import (
 
 var (
 	flagTarget   = flag.String("target", "", "external SODP server URL (e.g. ws://localhost:7777); empty = in-process Go server")
-	flagDuration = flag.Duration("duration", 20*time.Second, "benchmark duration")
+	flagDuration = flag.Duration("duration", 20*time.Second, "benchmark duration (single-run mode)")
 	flagWriters  = flag.Int("writers", 4, "concurrent writer connections")
 	flagPipeline = flag.Int("pipeline", 16, "in-flight calls per writer (pipeline depth)")
-	flagWatchers = flag.Int("watchers", 500, "concurrent watcher connections")
+	flagWatchers = flag.Int("watchers", 500, "concurrent watcher connections (single-run mode)")
 	flagWarmup   = flag.Duration("warmup", 2*time.Second, "warmup duration before recording starts")
 	flagKey      = flag.String("key", "bench", "state key")
-	flagReport   = flag.Duration("report", 5*time.Second, "live progress interval")
+	flagReport   = flag.Duration("report", 5*time.Second, "live progress interval (single-run mode)")
+
+	flagMatrix         = flag.Bool("matrix", false, "sweep watcher counts and print a scaling table")
+	flagWatcherList    = flag.String("watcher-list", "0,10,100,500,1000", "comma-separated watcher counts for matrix mode")
+	flagMatrixDuration = flag.Duration("matrix-duration", 10*time.Second, "duration per matrix cell")
+	flagMatrixWarmup   = flag.Duration("matrix-warmup", 2*time.Second, "warmup per matrix cell")
 )
 
 // ── connection ────────────────────────────────────────────────────────────────
 
 type conn struct {
-	ws  *websocket.Conn
-	mu  sync.Mutex // serialize writes (multiple goroutines may call send)
+	ws *websocket.Conn
+	mu sync.Mutex
 }
 
 func dialURL(url string) *conn {
@@ -93,18 +110,11 @@ func (c *conn) read() (sodp.Frame, int) {
 
 func (c *conn) close() { c.ws.Close() }
 
-// readHello drains HELLO frame, returns whether auth is required.
-func readHello(c *conn) bool {
+func readHello(c *conn) {
 	f, _ := c.read()
 	if f.Type != sodp.FrameHello {
 		log.Fatalf("expected HELLO, got 0x%02x", f.Type)
 	}
-	if m, ok := f.Body.(map[string]any); ok {
-		if auth, ok := m["auth"].(bool); ok {
-			return auth
-		}
-	}
-	return false
 }
 
 // ── stats ─────────────────────────────────────────────────────────────────────
@@ -143,43 +153,18 @@ func pct(sorted []time.Duration, p float64) time.Duration {
 }
 
 func formatDur(d time.Duration) string {
+	if d == 0 {
+		return "—"
+	}
 	if d < time.Millisecond {
 		return fmt.Sprintf("%dµs", d.Microseconds())
 	}
-	return fmt.Sprintf("%.2fms", float64(d.Microseconds())/1000)
-}
-
-func printSummary(label string, lats []time.Duration, elapsed time.Duration, mutations int64, watcherBytes int64) {
-	s := make([]time.Duration, len(lats))
-	copy(s, lats)
-	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
-
-	throughput := float64(mutations) / elapsed.Seconds()
-	var maxLat time.Duration
-	if len(s) > 0 {
-		maxLat = s[len(s)-1]
-	}
-
-	fmt.Printf("\n%s\n", label)
-	fmt.Printf("  duration:    %v\n", elapsed.Round(time.Millisecond))
-	fmt.Printf("  mutations:   %s\n", commaf(int(mutations)))
-	fmt.Printf("  throughput:  %s ops/sec\n", commaf(int(throughput)))
-	fmt.Printf("  P50:         %s\n", formatDur(pct(s, 50)))
-	fmt.Printf("  P95:         %s\n", formatDur(pct(s, 95)))
-	fmt.Printf("  P99:         %s\n", formatDur(pct(s, 99)))
-	fmt.Printf("  P999:        %s\n", formatDur(pct(s, 99.9)))
-	fmt.Printf("  max:         %s\n", formatDur(maxLat))
-	if watcherBytes > 0 && mutations > 0 {
-		fmt.Printf("  bytes/round: %s (%d watchers × ~%d bytes)\n",
-			commaf(int(watcherBytes/mutations)),
-			*flagWatchers,
-			watcherBytes/mutations/int64(*flagWatchers))
-	}
+	return fmt.Sprintf("%.1fms", float64(d.Microseconds())/1000)
 }
 
 func commaf(n int) string {
 	s := fmt.Sprintf("%d", n)
-	out := []byte{}
+	out := make([]byte, 0, len(s)+len(s)/3)
 	for i, c := range s {
 		if i > 0 && (len(s)-i)%3 == 0 {
 			out = append(out, ',')
@@ -193,44 +178,38 @@ func commaf(n int) string {
 
 func makeValue(i int) map[string]any {
 	return map[string]any{
-		"counter":  int64(i),
-		"status":   "running",
-		"node":     "bench",
-		"score":    3.14159,
-		"active":   true,
-		"label":    "iteration",
-		"meta":     map[string]any{"source": "bench", "rev": int64(i % 1000)},
-		"tags":     []any{"sodp", "bench"},
+		"counter": int64(i),
+		"status":  "running",
+		"node":    "bench",
+		"score":   3.14159,
+		"active":  true,
+		"label":   "iteration",
+		"meta":    map[string]any{"source": "bench", "rev": int64(i % 1000)},
+		"tags":    []any{"sodp", "bench"},
 	}
 }
 
 // ── writer ────────────────────────────────────────────────────────────────────
-//
-// Each writer uses a semaphore of size `pipeline` to keep that many CALLs
-// in flight concurrently. A separate reader goroutine drains RESULTs and
-// records latency.
 
-func runWriter(ctx context.Context, wsURL string, writerID int, recording *atomic.Bool, st *stats, ops *atomic.Int64) {
+// runWriter sends pipelined CALLs using a semaphore. String call_ids ensure
+// both Go and Rust servers echo them back correctly.
+func runWriter(ctx context.Context, wsURL string, recording *atomic.Bool, st *stats, ops *atomic.Int64) {
 	c := dialURL(wsURL)
 	defer c.close()
 	readHello(c)
 
 	pipeline := *flagPipeline
-
-	// call_id → sent-at timestamp; use string keys so both Go and Rust echo them correctly.
-	type pending struct {
-		sentAt time.Time
-	}
+	type pending struct{ sentAt time.Time }
 	inflight := make(map[string]pending, pipeline)
 	var mu sync.Mutex
 	sem := make(chan struct{}, pipeline)
 
 	var seq atomic.Int64
 
-	// Close connection on context cancellation to unblock the reader goroutine.
-	go func() { <-ctx.Done(); c.ws.Close() }()
-
-	// Reader drains RESULTs.
+	// Reader drains RESULTs and releases semaphore slots.
+	// The goroutine exits when c.read() returns a zero frame (connection closed).
+	// defer c.close() (above) closes the connection when the main loop returns on
+	// ctx.Done(), which unblocks this goroutine without needing a separate cancel goroutine.
 	go func() {
 		for {
 			f, _ := c.read()
@@ -250,9 +229,8 @@ func runWriter(ctx context.Context, wsURL string, writerID int, recording *atomi
 				delete(inflight, callID)
 			}
 			mu.Unlock()
-
 			if ok {
-				<-sem // release pipeline slot
+				<-sem
 				if recording.Load() {
 					st.record(time.Since(p.sentAt))
 					ops.Add(1)
@@ -265,16 +243,14 @@ func runWriter(ctx context.Context, wsURL string, writerID int, recording *atomi
 		select {
 		case <-ctx.Done():
 			return
-		case sem <- struct{}{}: // acquire pipeline slot
+		case sem <- struct{}{}:
 		}
-
 		id := seq.Add(1)
-		callID := fmt.Sprintf("%d", id)
+		callID := strconv.FormatInt(id, 10)
 		sentAt := time.Now()
 		mu.Lock()
 		inflight[callID] = pending{sentAt: sentAt}
 		mu.Unlock()
-
 		c.send(sodp.Frame{
 			Type:     sodp.FrameCall,
 			StreamID: 1,
@@ -290,22 +266,46 @@ func runWriter(ctx context.Context, wsURL string, writerID int, recording *atomi
 
 // ── watcher ───────────────────────────────────────────────────────────────────
 
-func runWatcher(ctx context.Context, wsURL string, watcherID int, totalBytes *atomic.Int64, deltaCount *atomic.Int64) {
-	c := dialURL(wsURL)
+// watchGroup manages a pool of watcher connections.
+type watchGroup struct {
+	conns      []*conn
+	totalBytes atomic.Int64
+	deltaCount atomic.Int64
+}
+
+func (wg *watchGroup) closeAll() {
+	for _, c := range wg.conns {
+		c.ws.Close()
+	}
+}
+
+func startWatchers(wsURL string, n int) *watchGroup {
+	wg := &watchGroup{conns: make([]*conn, n)}
+	var mu sync.Mutex
+	var eg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		eg.Add(1)
+		go func(id int) {
+			defer eg.Done()
+			c := dialURL(wsURL)
+			mu.Lock()
+			wg.conns[id] = c
+			mu.Unlock()
+			readHello(c)
+			c.send(sodp.Frame{
+				Type:     sodp.FrameWatch,
+				StreamID: uint32(1000 + id),
+				Body:     map[string]any{"state": *flagKey},
+			})
+			c.read() // STATE_INIT
+		}(i)
+	}
+	eg.Wait()
+	return wg
+}
+
+func runWatcher(ctx context.Context, c *conn, wg *watchGroup) {
 	defer c.close()
-
-	// Close connection on context cancellation to unblock ReadMessage.
-	go func() { <-ctx.Done(); c.ws.Close() }()
-
-	readHello(c)
-
-	c.send(sodp.Frame{
-		Type:     sodp.FrameWatch,
-		StreamID: uint32(1000 + watcherID),
-		Body:     map[string]any{"state": *flagKey},
-	})
-	c.read() // STATE_INIT
-
 	for {
 		_, data, err := c.ws.ReadMessage()
 		if err != nil {
@@ -315,9 +315,311 @@ func runWatcher(ctx context.Context, wsURL string, watcherID int, totalBytes *at
 		if err != nil || f.Type != sodp.FrameDelta {
 			continue
 		}
-		totalBytes.Add(int64(len(data)))
-		deltaCount.Add(1)
+		wg.totalBytes.Add(int64(len(data)))
+		wg.deltaCount.Add(1)
 	}
+}
+
+// ── bench run ─────────────────────────────────────────────────────────────────
+
+type result struct {
+	duration     time.Duration
+	mutations    int64
+	latencies    []time.Duration // sorted
+	watcherBytes int64
+	deltaCount   int64
+	heapMB       float64
+	goroutines   int
+}
+
+func runBench(wsURL string, numWatchers int, warmup, duration time.Duration) result {
+	// Connect watchers first.
+	var wg *watchGroup
+	if numWatchers > 0 {
+		wg = startWatchers(wsURL, numWatchers)
+		time.Sleep(100 * time.Millisecond) // let subscriptions propagate
+	}
+
+	// Start writers (warmup phase — not recording).
+	writeCtx, writeCancel := context.WithCancel(context.Background())
+	var recording atomic.Bool
+	var ops atomic.Int64
+	st := &stats{}
+
+	var wwg sync.WaitGroup
+	for i := 0; i < *flagWriters; i++ {
+		wwg.Add(1)
+		go func() {
+			defer wwg.Done()
+			runWriter(writeCtx, wsURL, &recording, st, &ops)
+		}()
+	}
+
+	// Watcher read loops — started BEFORE warmup so they're draining from the start.
+	var rwg sync.WaitGroup
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	if wg != nil {
+		for _, c := range wg.conns {
+			c := c
+			rwg.Add(1)
+			go func() {
+				defer rwg.Done()
+				runWatcher(watchCtx, c, wg)
+			}()
+		}
+	}
+
+	time.Sleep(warmup)
+
+	// Measured run.
+	recording.Store(true)
+	if wg != nil {
+		wg.totalBytes.Store(0)
+		wg.deltaCount.Store(0)
+	}
+	start := time.Now()
+	time.Sleep(duration)
+	elapsed := time.Since(start)
+
+	recording.Store(false)
+	writeCancel()
+	wwg.Wait()
+
+	watchCancel()
+	if wg != nil {
+		wg.closeAll() // unblocks runWatcher goroutines
+	}
+	rwg.Wait()
+
+	// Collect results.
+	lats := st.snapshot()
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	var wb, dc int64
+	if wg != nil {
+		wb = wg.totalBytes.Load()
+		dc = wg.deltaCount.Load()
+	}
+
+	return result{
+		duration:     elapsed,
+		mutations:    ops.Load(),
+		latencies:    lats,
+		watcherBytes: wb,
+		deltaCount:   dc,
+		heapMB:       float64(mem.HeapInuse) / (1024 * 1024),
+		goroutines:   runtime.NumGoroutine(),
+	}
+}
+
+// ── single run ────────────────────────────────────────────────────────────────
+
+func printSummary(label string, r result, numWatchers int) {
+	throughput := float64(r.mutations) / r.duration.Seconds()
+	fmt.Printf("\n%s\n", label)
+	fmt.Printf("  duration:    %v\n", r.duration.Round(time.Millisecond))
+	fmt.Printf("  mutations:   %s\n", commaf(int(r.mutations)))
+	fmt.Printf("  throughput:  %s ops/sec\n", commaf(int(throughput)))
+	fmt.Printf("  P50:         %s\n", formatDur(pct(r.latencies, 50)))
+	fmt.Printf("  P95:         %s\n", formatDur(pct(r.latencies, 95)))
+	fmt.Printf("  P99:         %s\n", formatDur(pct(r.latencies, 99)))
+	fmt.Printf("  P999:        %s\n", formatDur(pct(r.latencies, 99.9)))
+	if len(r.latencies) > 0 {
+		fmt.Printf("  max:         %s\n", formatDur(r.latencies[len(r.latencies)-1]))
+	}
+	if r.watcherBytes > 0 && r.mutations > 0 {
+		bpw := r.watcherBytes / r.mutations / int64(numWatchers)
+		fmt.Printf("  bytes/watcher/round: %d B\n", bpw)
+	}
+	if r.deltaCount > 0 && numWatchers > 0 {
+		expected := r.mutations * int64(numWatchers)
+		pct := float64(r.deltaCount) / float64(expected) * 100
+		fmt.Printf("  delta delivery: %s / %s (%.1f%%)\n",
+			commaf(int(r.deltaCount)), commaf(int(expected)), pct)
+	}
+	fmt.Printf("  heap:        %.1f MB\n", r.heapMB)
+	fmt.Printf("  goroutines:  %d\n", r.goroutines)
+}
+
+func singleRun(wsURL string) {
+	numWatchers := *flagWatchers
+	fmt.Printf("writers:     %d  (pipeline: %d  →  %d max in-flight)\n",
+		*flagWriters, *flagPipeline, *flagWriters**flagPipeline)
+	fmt.Printf("watchers:    %d\n", numWatchers)
+	fmt.Printf("duration:    %v  (warmup: %v)\n", *flagDuration, *flagWarmup)
+	fmt.Printf("key:         %s\n\n", *flagKey)
+
+	// Connect watchers up front so we can show progress while they connect.
+	var wg *watchGroup
+	if numWatchers > 0 {
+		fmt.Printf("connecting %d watchers... ", numWatchers)
+		wg = startWatchers(wsURL, numWatchers)
+		time.Sleep(100 * time.Millisecond)
+		fmt.Printf("ok\n")
+	}
+
+	fmt.Printf("warming up for %v... ", *flagWarmup)
+
+	writeCtx, writeCancel := context.WithCancel(context.Background())
+	var recording atomic.Bool
+	var ops atomic.Int64
+	st := &stats{}
+
+	var writers sync.WaitGroup
+	for i := 0; i < *flagWriters; i++ {
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			runWriter(writeCtx, wsURL, &recording, st, &ops)
+		}()
+	}
+
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	var rwg sync.WaitGroup
+	if wg != nil {
+		for _, c := range wg.conns {
+			c := c
+			rwg.Add(1)
+			go func() {
+				defer rwg.Done()
+				runWatcher(watchCtx, c, wg)
+			}()
+		}
+	}
+
+	time.Sleep(*flagWarmup)
+	fmt.Printf("ok\n\n")
+
+	recording.Store(true)
+	if wg != nil {
+		wg.totalBytes.Store(0)
+		wg.deltaCount.Store(0)
+	}
+
+	start := time.Now()
+	ticker := time.NewTicker(*flagReport)
+	deadline := time.NewTimer(*flagDuration)
+
+	var lastOps int64
+	var lastTime = start
+
+	fmt.Printf("%-8s  %-18s  %-10s  %-10s  %-10s  %-10s  %-10s  %-10s\n",
+		"elapsed", "throughput", "P50", "P95", "P99", "P999", "goroutines", "heap")
+	fmt.Printf("%s\n", strings.Repeat("─", 100))
+
+	running := true
+	for running {
+		select {
+		case t := <-ticker.C:
+			snap := st.snapshot()
+			sort.Slice(snap, func(i, j int) bool { return snap[i] < snap[j] })
+			curOps := ops.Load()
+			interval := t.Sub(lastTime).Seconds()
+			tput := float64(curOps-lastOps) / interval
+			lastOps = curOps
+			lastTime = t
+			var mem runtime.MemStats
+			runtime.ReadMemStats(&mem)
+			fmt.Printf("%-8s  %-18s  %-10s  %-10s  %-10s  %-10s  %-10d  %.1f MB\n",
+				time.Since(start).Round(time.Second),
+				commaf(int(tput))+" ops/sec",
+				formatDur(pct(snap, 50)),
+				formatDur(pct(snap, 95)),
+				formatDur(pct(snap, 99)),
+				formatDur(pct(snap, 99.9)),
+				runtime.NumGoroutine(),
+				float64(mem.HeapInuse)/(1024*1024),
+			)
+		case <-deadline.C:
+			running = false
+		}
+	}
+
+	elapsed := time.Since(start)
+	recording.Store(false)
+	writeCancel()
+	writers.Wait()
+
+	watchCancel()
+	if wg != nil {
+		wg.closeAll()
+	}
+	rwg.Wait()
+
+	lats := st.snapshot()
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	var wb, dc int64
+	if wg != nil {
+		wb = wg.totalBytes.Load()
+		dc = wg.deltaCount.Load()
+	}
+
+	printSummary("Final results", result{
+		duration:     elapsed,
+		mutations:    ops.Load(),
+		latencies:    lats,
+		watcherBytes: wb,
+		deltaCount:   dc,
+		heapMB:       float64(mem.HeapInuse) / (1024 * 1024),
+		goroutines:   runtime.NumGoroutine(),
+	}, numWatchers)
+}
+
+// ── matrix mode ───────────────────────────────────────────────────────────────
+
+func parseWatcherList(s string) []int {
+	parts := strings.Split(s, ",")
+	counts := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			log.Fatalf("invalid watcher count %q in -watcher-list", p)
+		}
+		counts = append(counts, n)
+	}
+	return counts
+}
+
+func matrixRun(wsURL string) {
+	counts := parseWatcherList(*flagWatcherList)
+
+	fmt.Printf("writers: %d  pipeline: %d  →  %d max in-flight\n",
+		*flagWriters, *flagPipeline, *flagWriters**flagPipeline)
+	fmt.Printf("duration per cell: %v  warmup: %v\n", *flagMatrixDuration, *flagMatrixWarmup)
+	fmt.Printf("key: %s\n\n", *flagKey)
+	fmt.Printf("%-10s  %-14s  %-10s  %-10s  %-10s  %-14s  %-10s\n",
+		"watchers", "ops/sec", "P50", "P95", "P99", "bytes/watcher", "heap")
+	fmt.Printf("%s\n", strings.Repeat("─", 86))
+
+	for _, n := range counts {
+		r := runBench(wsURL, n, *flagMatrixWarmup, *flagMatrixDuration)
+		throughput := float64(r.mutations) / r.duration.Seconds()
+
+		bpw := "—"
+		if n > 0 && r.mutations > 0 {
+			bpw = fmt.Sprintf("%d B", r.watcherBytes/r.mutations/int64(n))
+		}
+
+		fmt.Printf("%-10d  %-14s  %-10s  %-10s  %-10s  %-14s  %.1f MB\n",
+			n,
+			commaf(int(throughput))+" ops/s",
+			formatDur(pct(r.latencies, 50)),
+			formatDur(pct(r.latencies, 95)),
+			formatDur(pct(r.latencies, 99)),
+			bpw,
+			r.heapMB,
+		)
+
+		// GC between cells to get a clean heap reading for the next one.
+		runtime.GC()
+	}
+	fmt.Println()
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -329,9 +631,8 @@ func main() {
 	var ts *httptest.Server
 
 	if wsURL == "" {
-		// Start in-process Go server.
 		srv := sodp.NewServer(
-			sodp.WithBackpressureLimit(65536),
+			sodp.WithBackpressureLimit(256),
 			sodp.WithRateLimit(10_000_000),
 			sodp.WithMaxSessions(10_000),
 			sodp.WithMaxWatches(1024),
@@ -341,138 +642,16 @@ func main() {
 		ts = httptest.NewServer(mux)
 		wsURL = "ws" + strings.TrimPrefix(ts.URL, "http") + "/sodp"
 		defer ts.Close()
-		fmt.Printf("target:      in-process Go server (%s)\n", ts.URL)
+		fmt.Printf("target:  in-process Go server (%s)\n", ts.URL)
+		fmt.Printf("         *** NOTE: server goroutines share CPU with the bench process.\n")
+		fmt.Printf("         *** For a fair comparison, run ./cmd/sodp-server and use -target.\n\n")
 	} else {
-		fmt.Printf("target:      external server (%s)\n", wsURL)
+		fmt.Printf("target:  %s\n\n", wsURL)
 	}
 
-	fmt.Printf("writers:     %d  (pipeline depth: %d each → %d max in-flight)\n",
-		*flagWriters, *flagPipeline, *flagWriters**flagPipeline)
-	fmt.Printf("watchers:    %d\n", *flagWatchers)
-	fmt.Printf("duration:    %v  (warmup: %v)\n", *flagDuration, *flagWarmup)
-	fmt.Printf("key:         %s\n", *flagKey)
-	fmt.Printf("────────────────────────────────────────────────────────────\n")
-
-	// ── connect watchers ────────────────────────────────────────────────────
-	fmt.Printf("connecting %d watchers...", *flagWatchers)
-	watchCtx, watchCancel := context.WithCancel(context.Background())
-	var totalWatcherBytes atomic.Int64
-	var totalDeltaCount atomic.Int64
-
-	var wwg sync.WaitGroup
-	for i := 0; i < *flagWatchers; i++ {
-		wwg.Add(1)
-		go func(id int) {
-			defer wwg.Done()
-			runWatcher(watchCtx, wsURL, id, &totalWatcherBytes, &totalDeltaCount)
-		}(i)
+	if *flagMatrix {
+		matrixRun(wsURL)
+	} else {
+		singleRun(wsURL)
 	}
-	// Give watchers time to subscribe.
-	time.Sleep(200 * time.Millisecond)
-	fmt.Printf(" ok\n")
-
-	// ── warmup ─────────────────────────────────────────────────────────────
-	fmt.Printf("warming up for %v...", *flagWarmup)
-	writeCtx, writeCancel := context.WithCancel(context.Background())
-	var recording atomic.Bool
-	var ops atomic.Int64
-	st := &stats{}
-
-	var wg sync.WaitGroup
-	for i := 0; i < *flagWriters; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			runWriter(writeCtx, wsURL, id, &recording, st, &ops)
-		}(i)
-	}
-	time.Sleep(*flagWarmup)
-	fmt.Printf(" ok\n\n")
-
-	// ── measured run ────────────────────────────────────────────────────────
-	recording.Store(true)
-	totalWatcherBytes.Store(0)
-	totalDeltaCount.Store(0)
-
-	start := time.Now()
-	ticker := time.NewTicker(*flagReport)
-	deadline := time.NewTimer(*flagDuration)
-
-	var lastOps int64
-	var lastTime = start
-
-	fmt.Printf("%-8s  %-18s  %-10s  %-10s  %-10s  %-10s  %-10s  %-12s\n",
-		"elapsed", "throughput", "P50", "P95", "P99", "P999", "goroutines", "heap")
-	fmt.Printf("%s\n", strings.Repeat("─", 95))
-
-	running := true
-	for running {
-		select {
-		case t := <-ticker.C:
-			snap := st.snapshot()
-			sort.Slice(snap, func(i, j int) bool { return snap[i] < snap[j] })
-			curOps := ops.Load()
-			interval := t.Sub(lastTime).Seconds()
-			throughput := float64(curOps-lastOps) / interval
-			lastOps = curOps
-			lastTime = t
-
-			var mem runtime.MemStats
-			runtime.ReadMemStats(&mem)
-			heapMB := float64(mem.HeapInuse) / (1024 * 1024)
-
-			fmt.Printf("%-8s  %-18s  %-10s  %-10s  %-10s  %-10s  %-10d  %.1f MB\n",
-				time.Since(start).Round(time.Second),
-				commaf(int(throughput))+" ops/sec",
-				formatDur(pct(snap, 50)),
-				formatDur(pct(snap, 95)),
-				formatDur(pct(snap, 99)),
-				formatDur(pct(snap, 99.9)),
-				runtime.NumGoroutine(),
-				heapMB,
-			)
-
-		case <-deadline.C:
-			running = false
-		}
-	}
-
-	elapsed := time.Since(start)
-	recording.Store(false)
-	writeCancel()
-	wg.Wait()
-
-	watchCancel()
-	wwg.Wait()
-
-	// ── final report ────────────────────────────────────────────────────────
-	finalOps := ops.Load()
-	finalBytes := totalWatcherBytes.Load()
-	finalDeltas := totalDeltaCount.Load()
-
-	printSummary(
-		"\nFinal results",
-		st.snapshot(),
-		elapsed,
-		finalOps,
-		finalBytes,
-	)
-
-	// Delivery check: each mutation should produce 1 DELTA per watcher.
-	// Deltas may lag slightly (watcher reads may not have finished draining).
-	expectedDeltas := finalOps * int64(*flagWatchers)
-	deliveryPct := float64(0)
-	if expectedDeltas > 0 {
-		deliveryPct = float64(finalDeltas) / float64(expectedDeltas) * 100
-	}
-	fmt.Printf("  delta delivery: %s / %s (%.1f%% — expect <100%% if watchers lagged)\n",
-		commaf(int(finalDeltas)), commaf(int(expectedDeltas)), deliveryPct)
-
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
-	fmt.Printf("  heap (final):  %.1f MB  (sys: %.1f MB)\n",
-		float64(mem.HeapInuse)/(1024*1024),
-		float64(mem.Sys)/(1024*1024),
-	)
-	fmt.Println()
 }
