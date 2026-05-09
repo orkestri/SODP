@@ -4,14 +4,7 @@ A lightweight, high-performance protocol for **continuous state synchronization*
 
 Instead of polling or request-response, clients subscribe to named state keys and receive a snapshot followed by a stream of structural diffs (deltas) as the state changes. The result is a persistent replica — always current, always minimal on the wire.
 
-```
-Client                          Server
-  │── WATCH "game.player" ────▶ │
-  │◀─ STATE_INIT { health:100 } │
-  │                             │  (another client writes health: 80)
-  │◀─ DELTA { /health → 80 }   │
-  │◀─ DELTA { /health → 60 }   │
-```
+![SODP sequence diagram](docs/diagrams/readme-overview.svg)
 
 ---
 
