@@ -816,7 +816,7 @@ func decodeCallBody(body any) (CallBody, error) {
 	if method == "" {
 		return CallBody{}, fmt.Errorf("missing method")
 	}
-	callID, _ := m["call_id"].(string)
+	callID := m["call_id"]
 	args, _ := m["args"].(map[string]any)
 	if args == nil {
 		args = make(map[string]any)
