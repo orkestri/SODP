@@ -1455,6 +1455,19 @@ Mutation: `state.set { "name": "Alice" }`
 
 ---
 
+## Appendix E. Known Implementations
+
+| Component | Language | Package / Repository |
+|-----------|----------|----------------------|
+| Reference server | Rust | [github.com/orkestri/SODP](https://github.com/orkestri/SODP) |
+| Server library | Go | [github.com/orkestri/sodp-go](https://github.com/orkestri/SODP/tree/master/sodp-go) |
+| Client SDK | TypeScript | [@sodp/client](https://www.npmjs.com/package/@sodp/client) |
+| React hooks | TypeScript | [@sodp/react](https://www.npmjs.com/package/@sodp/react) |
+| Client SDK | Python | [sodp](https://pypi.org/project/sodp/) |
+| Client SDK | Java | io.sodp:sodp-client |
+
+---
+
 *This specification consolidates and supersedes all previous SODP
 documentation (docs/ref_v1.md through docs/ref_v6.md and
 docs/protocol.md). Those documents are retained for historical reference

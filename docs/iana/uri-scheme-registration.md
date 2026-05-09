@@ -118,6 +118,7 @@ IDs 0x0E–0xFF are reserved for future use.
 | Component | Language | Package |
 |-----------|----------|---------|
 | Reference server | Rust | [github.com/orkestri/SODP](https://github.com/orkestri/SODP) |
+| Server library | Go | [github.com/orkestri/sodp-go](https://github.com/orkestri/SODP/tree/master/sodp-go) |
 | Client SDK | TypeScript | [@sodp/client](https://www.npmjs.com/package/@sodp/client) |
 | React hooks | TypeScript | [@sodp/react](https://www.npmjs.com/package/@sodp/react) |
 | Client SDK | Python | [sodp](https://pypi.org/project/sodp/) |
