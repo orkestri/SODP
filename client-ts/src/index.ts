@@ -79,6 +79,32 @@ export interface SodpClientOptions {
   onConnect?: () => void;
   /** Called each time the connection drops (before any reconnect attempt). */
   onDisconnect?: () => void;
+  /**
+   * Called on transport errors (WebSocket failures) and protocol errors
+   * (ERROR frames from the server).
+   *
+   * The {@link SodpError} object carries a human-readable `message`, an
+   * optional numeric `code` (from the server's ERROR frame, if applicable),
+   * and the originating `source` so callers can distinguish transport-level
+   * failures from protocol-level ones.
+   *
+   * If not provided, errors are logged to `console.warn`.
+   */
+  onError?: (error: SodpError) => void;
+}
+
+/**
+ * Structured error surfaced via `SodpClientOptions.onError`.
+ *
+ * - `source: "transport"` — WebSocket connection error (refused, reset, TLS failure).
+ * - `source: "protocol"` — ERROR frame received from the server.
+ * - `source: "decode"` — failed to decode an incoming MessagePack frame.
+ */
+export interface SodpError {
+  message: string;
+  /** Server error code (e.g. 401, 404, 422, 429). Only present for `source: "protocol"`. */
+  code?: number;
+  source: "transport" | "protocol" | "decode";
 }
 
 export interface CallResult<D = unknown> {
@@ -127,7 +153,7 @@ type WireFrame = [number, number, number, unknown];
  */
 export class SodpClient {
   private readonly url:  string;
-  private readonly opts: Required<Omit<SodpClientOptions, "token" | "tokenProvider" | "onConnect" | "onDisconnect">> & { token?: string; tokenProvider?: () => string | Promise<string>; onConnect?: () => void; onDisconnect?: () => void };
+  private readonly opts: Required<Omit<SodpClientOptions, "token" | "tokenProvider" | "onConnect" | "onDisconnect" | "onError">> & { token?: string; tokenProvider?: () => string | Promise<string>; onConnect?: () => void; onDisconnect?: () => void; onError?: (error: SodpError) => void };
 
   private ws:               WebSocket | null = null;
   private authenticated:    boolean          = false;
@@ -161,6 +187,7 @@ export class SodpClient {
       tokenProvider:      opts.tokenProvider,
       onConnect:          opts.onConnect,
       onDisconnect:       opts.onDisconnect,
+      onError:            opts.onError,
       WebSocket:          opts.WebSocket ?? (globalThis as unknown as { WebSocket: typeof globalThis.WebSocket }).WebSocket,
       reconnect:          opts.reconnect          ?? true,
       reconnectDelay:     opts.reconnectDelay     ?? 1_000,
@@ -191,12 +218,29 @@ export class SodpClient {
       try {
         this.handleFrame(decode(new Uint8Array(event.data)) as WireFrame);
       } catch (e) {
-        console.error("[SODP] frame decode error:", e);
+        this.emitError({
+          message: `[SODP] frame decode error: ${e instanceof Error ? e.message : String(e)}`,
+          source: "decode",
+        });
       }
     };
 
     ws.onclose = () => this.onDisconnect();
-    ws.onerror = (e: Event) => console.warn("[SODP] WebSocket error:", e);
+    ws.onerror = () => {
+      // The browser WebSocket "error" Event carries almost no useful info
+      // (no message, no status code — just a bare Event object). Extract
+      // what we can from the WebSocket itself: the URL and readyState.
+      const url   = ws.url ?? this.url;
+      const state = ws.readyState;
+      const label = state === WebSocket.CONNECTING ? "connecting"
+                  : state === WebSocket.CLOSING    ? "closing"
+                  : state === WebSocket.CLOSED     ? "closed"
+                  :                                  "open";
+      this.emitError({
+        message: `[SODP] WebSocket error on ${url} (readyState: ${label})`,
+        source: "transport",
+      });
+    };
     // onopen is not needed — we wait for HELLO from the server.
   }
 
@@ -347,7 +391,7 @@ export class SodpClient {
 
   private onError(body: { code: number; message: string }): void {
     const msg = `[SODP] ERROR ${body.code}: ${body.message}`;
-    console.warn(msg);
+    this.emitError({ message: msg, code: body.code, source: "protocol" });
 
     // An error on the control stream rejects the oldest pending call.
     // (The protocol currently has no call_id in ERROR frames.)
@@ -357,6 +401,15 @@ export class SodpClient {
       clearTimeout(pending.timer);
       this.pendingCalls.delete(callId);
       pending.reject(new Error(msg));
+    }
+  }
+
+  /** Route an error to the user-supplied `onError` callback, or fall back to `console.warn`. */
+  private emitError(error: SodpError): void {
+    if (this.opts.onError) {
+      this.opts.onError(error);
+    } else {
+      console.warn(error.message);
     }
   }
 

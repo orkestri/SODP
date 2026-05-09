@@ -1,6 +1,9 @@
 package sodp
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // DeltaOpType identifies the kind of structural change.
 type DeltaOpType string
@@ -70,6 +73,69 @@ func Diff(old, new any) []DeltaOp {
 	}
 
 	return ops
+}
+
+// ApplyOps reconstructs a new value by applying delta operations to current.
+// Used by the cluster backend to update local state from a remote node's delta
+// without re-running the full diff algorithm.
+func ApplyOps(current any, ops []DeltaOp) any {
+	for _, op := range ops {
+		current = applyOp(current, op.Op, op.Path, op.Value)
+	}
+	return current
+}
+
+func applyOp(current any, opType DeltaOpType, path string, value any) any {
+	if path == "/" {
+		if opType == OpRemove {
+			return nil
+		}
+		return value
+	}
+	if len(path) < 2 || path[0] != '/' {
+		return current
+	}
+	rest := path[1:]
+
+	// Array operations: "/-" (append) or "/N" (index-based remove).
+	if slice, ok := current.([]any); ok {
+		switch {
+		case rest == "-" && opType == OpAdd:
+			out := make([]any, len(slice)+1)
+			copy(out, slice)
+			out[len(slice)] = value
+			return out
+		case opType == OpRemove && len(slice) > 0:
+			// "/0" → remove head; any other index falls here too.
+			if !strings.ContainsRune(rest, '/') {
+				return slice[1:]
+			}
+		}
+		return current
+	}
+
+	// Map operations.
+	slash := strings.IndexByte(rest, '/')
+	var field string
+	m, _ := toStringMap(current)
+	result := make(map[string]any, len(m)+1)
+	for k, v := range m {
+		result[k] = v
+	}
+
+	if slash == -1 {
+		field = rest
+		switch opType {
+		case OpAdd, OpUpdate:
+			result[field] = value
+		case OpRemove:
+			delete(result, field)
+		}
+	} else {
+		field = rest[:slash]
+		result[field] = applyOp(result[field], opType, rest[slash:], value)
+	}
+	return result
 }
 
 func toStringMap(v any) (map[string]any, bool) {

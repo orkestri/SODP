@@ -8,3 +8,4 @@ pub mod schema;
 pub mod session;
 pub mod server;
 pub mod state;
+pub mod write_pool;

@@ -1,18 +1,23 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::mpsc::UnboundedSender;
-use tracing::error;
+use serde::Serialize;
+use tracing::warn;
 
 use crate::delta::DeltaOp;
-use crate::frame::{self, OutboundMsg};
+use crate::frame::OutboundMsg;
+use crate::write_pool::WriteHandle;
 
-/// One active WATCH subscription: a channel back to the owning connection task.
-#[derive(Debug, Clone)]
+/// Default capacity for the per-session bounded channel.
+/// When the channel is full, the subscriber is considered slow and evicted.
+pub const DEFAULT_BACKPRESSURE_LIMIT: usize = 1024;
+
+/// One active WATCH subscription: a write handle back to the owning session.
+#[derive(Clone)]
 pub struct Subscriber {
     pub session_id: String,
     pub stream_id: u32,
-    pub tx: UnboundedSender<OutboundMsg>,
+    pub write: Arc<WriteHandle>,
 }
 
 /// Registry of all active subscriptions, keyed by state name.
@@ -30,14 +35,12 @@ pub struct FanoutBus {
 /// once per mutation, then pass the bytes to `broadcast_encoded` and/or
 /// `frame::delta_bytes` for direct same-session delivery.
 pub fn encode_delta_body(version: u64, ops: &[DeltaOp]) -> Vec<u8> {
-    let ops_value = match serde_json::to_value(ops) {
-        Ok(v) => v,
-        Err(e) => { error!("Failed to serialize delta ops: {e}"); return vec![]; }
-    };
-    rmp_serde::to_vec(&serde_json::json!({
-        "version": version,
-        "ops":     ops_value,
-    })).unwrap_or_default()
+    #[derive(Serialize)]
+    struct DeltaBody<'a> {
+        version: u64,
+        ops: &'a [DeltaOp],
+    }
+    rmp_serde::to_vec_named(&DeltaBody { version, ops }).unwrap_or_default()
 }
 
 impl FanoutBus {
@@ -67,24 +70,25 @@ impl FanoutBus {
     /// Optimised for low P99:
     ///  1. Snapshot subscriber handles while holding the shard lock for the
     ///     shortest possible window (just pointer copies, no allocation).
-    ///  2. Body is already encoded — per-subscriber cost is one small Vec
-    ///     alloc + header write.
+    ///  2. Body is already encoded — per-subscriber cost is one Arc clone.
     ///
     /// `exclude_session`: if `Some(id)`, skip the subscriber whose
     /// `session_id == id`.  Use this when the triggering session will receive
-    /// its own DELTA via a direct `ws_tx.send()` call.
+    /// its own DELTA via a direct write.
+    ///
+    /// Slow subscribers (full channel) are cancelled and removed inline.
     pub fn broadcast_encoded(
         &self,
         state_key: &str,
         body_mp: &[u8],
         exclude_session: Option<&str>,
     ) {
-        let snapshot: Vec<(u32, UnboundedSender<OutboundMsg>)> =
+        let snapshot: Vec<(u32, String, Arc<WriteHandle>)> =
             match self.subscriptions.get(state_key) {
                 Some(subs) => subs
                     .iter()
                     .filter(|s| exclude_session.is_none_or(|ex| s.session_id != ex))
-                    .map(|s| (s.stream_id, s.tx.clone()))
+                    .map(|s| (s.stream_id, s.session_id.clone(), Arc::clone(&s.write)))
                     .collect(),
                 None => return,
             };
@@ -92,9 +96,22 @@ impl FanoutBus {
 
         if snapshot.is_empty() { return; }
 
-        for (stream_id, tx) in snapshot {
-            let wire = frame::delta_bytes(stream_id, 0, body_mp);
-            let _ = tx.send(OutboundMsg::Bytes(wire));
+        // Wrap body_mp in Arc once — all subscribers share the bytes.
+        let shared: Arc<[u8]> = Arc::from(body_mp);
+
+        let mut slow_sessions: Vec<String> = Vec::new();
+
+        for (stream_id, session_id, write) in snapshot {
+            if !write.send(OutboundMsg::ArcDelta { stream_id, body_mp: Arc::clone(&shared) }) {
+                warn!("Slow consumer {session_id} — cancelling session");
+                slow_sessions.push(session_id);
+            }
+        }
+
+        // Remove slow subscribers from this key's subscription list.
+        if !slow_sessions.is_empty()
+            && let Some(mut subs) = self.subscriptions.get_mut(state_key) {
+                subs.retain(|s| !slow_sessions.contains(&s.session_id));
         }
     }
 

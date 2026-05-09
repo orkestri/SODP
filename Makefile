@@ -1,4 +1,4 @@
-.PHONY: build test fmt lint clean integration server
+.PHONY: build test fmt lint clean integration server bench load-test
 
 # ── Build ────────────────────────────────────────────────────────────────────
 
@@ -91,6 +91,17 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+# ── Benchmark ──────────────────────────────────────────────────────────────────
+
+bench:
+	cargo bench --bench delta --bench codec --bench state
+
+# ── Load test ──────────────────────────────────────────────────────────────────
+
+load-test:
+	cargo build --bin load-test --release
+	RUST_LOG=info ./target/release/load-test
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 

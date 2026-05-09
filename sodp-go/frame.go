@@ -106,7 +106,7 @@ type WatchBody struct {
 
 // CallBody is the CALL frame payload.
 type CallBody struct {
-	CallID string         `msgpack:"call_id"`
+	CallID any            `msgpack:"call_id"`
 	Method string         `msgpack:"method"`
 	Args   map[string]any `msgpack:"args"`
 }

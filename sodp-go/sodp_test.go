@@ -254,8 +254,8 @@ func TestRingLog_Wrap(t *testing.T) {
 // --- FanoutBus ---
 
 func TestFanout_BroadcastAndSkipSender(t *testing.T) {
-	fb := NewFanoutBus()
-	ch := make(chan []byte, 4)
+	fb := NewFanoutBus(nil)
+	ch := make(chan outMsg, 4)
 
 	fb.Subscribe("k", Subscriber{SessionID: "s1", StreamID: 10, Send: ch})
 	fb.Subscribe("k", Subscriber{SessionID: "s2", StreamID: 11, Send: ch})
@@ -263,24 +263,26 @@ func TestFanout_BroadcastAndSkipSender(t *testing.T) {
 	delta := DeltaEntry{Key: "k", Version: 1, Ops: []DeltaOp{{Op: OpUpdate, Path: "/x"}}}
 
 	// s1 is the sender — only s2 should receive.
+	// Delivery is async (per-key goroutine), so wait with a timeout.
 	fb.Broadcast(delta, "s1")
 
 	select {
 	case <-ch:
 		// got one message (s2)
-	default:
-		t.Fatal("s2 should have received")
+	case <-time.After(time.Second):
+		t.Fatal("s2 should have received within 1s")
 	}
 	select {
 	case <-ch:
 		t.Error("only one message expected (s1 was sender)")
-	default:
+	case <-time.After(50 * time.Millisecond):
+		// no second message — correct
 	}
 }
 
 func TestFanout_RemoveSession(t *testing.T) {
-	fb := NewFanoutBus()
-	ch := make(chan []byte, 4)
+	fb := NewFanoutBus(nil)
+	ch := make(chan outMsg, 4)
 	fb.Subscribe("k1", Subscriber{SessionID: "s1", StreamID: 10, Send: ch})
 	fb.Subscribe("k2", Subscriber{SessionID: "s1", StreamID: 11, Send: ch})
 	fb.RemoveSession("s1")
@@ -681,7 +683,7 @@ func TestIntegration_ConnectionLimit(t *testing.T) {
 }
 
 func TestIntegration_AuthorizeKeyHook(t *testing.T) {
-	authFn := func(sess *Session, key string) (bool, int, string) {
+	authFn := func(sess *Session, key, action string) (bool, int, string) {
 		if strings.HasPrefix(key, "private.") {
 			return false, 403, "access denied"
 		}
