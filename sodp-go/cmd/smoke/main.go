@@ -285,7 +285,7 @@ func main() {
 	// ── 10. AuthorizeKey hook ─────────────────────────────────────────────────
 	section("AuthorizeKey hook")
 	srvAuth := sodp.NewServer(
-		sodp.WithAuthorizeKey(func(sess *sodp.Session, key string) (bool, int, string) {
+		sodp.WithAuthorizeKey(func(sess *sodp.Session, key, action string) (bool, int, string) {
 			if strings.HasPrefix(key, "private.") {
 				return false, 403, "access denied"
 			}

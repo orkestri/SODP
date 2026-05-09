@@ -379,6 +379,74 @@ async fn bench_grpc(iters: usize) -> BenchResult {
     BenchResult { name: "gRPC (stream)".into(), latencies_us, bytes_per_update }
 }
 
+// ─── scalability bench helpers ───────────────────────────────────────────────
+
+/// Adaptive round count: fewer rounds at higher watcher counts to keep total
+/// runtime reasonable while still producing stable numbers.
+fn scale_rounds(watchers: usize, quick: bool) -> usize {
+    if quick {
+        match watchers { 0 => 200, 1..=100 => 30, 101..=500 => 10, _ => 5 }
+    } else {
+        match watchers { 0 => 500, 1..=10 => 200, 11..=100 => 100, 101..=500 => 30, _ => 15 }
+    }
+}
+
+/// Baseline: writer only, no fanout subscribers.
+/// Measures CALL → RESULT round-trip latency and derives ops/sec.
+async fn bench_baseline_sodp(url: &str, rounds: usize) -> ScaleRow {
+    let (mut ws, _) = connect_async(url).await.unwrap();
+    ws.next().await; // HELLO
+
+    let mut latencies: Vec<u128> = Vec::with_capacity(rounds);
+    for i in 0..rounds as u64 {
+        let call = sodp::frame::Frame {
+            frame_type: types::CALL, stream_id: 0, seq: i,
+            body: serde_json::json!({
+                "call_id": i, "method": "state.set",
+                "args": { "state": "bench.scale.base", "value": test_object(i) },
+            }),
+        };
+        let t = Instant::now();
+        ws.send(WsMsg::Binary(call.encode().unwrap())).await.unwrap();
+        ws.next().await; // RESULT
+        latencies.push(t.elapsed().as_micros());
+    }
+
+    let total_us: u128 = latencies.iter().sum();
+    let ops_sec = if total_us > 0 { 1_000_000.0 * rounds as f64 / total_us as f64 } else { 0.0 };
+    ScaleRow { watchers: 0, conns: 0, ops_sec, p50_us: percentile(&latencies, 50), p99_us: percentile(&latencies, 99) }
+}
+
+/// One row of the scalability table for `watchers > 0`.
+async fn bench_scale_row(url: &str, watchers: usize, mux: usize, rounds: usize) -> ScaleRow {
+    let conns = watchers.div_ceil(mux.max(1));
+    let r     = bench_fanout_sodp_at(url, watchers, mux, rounds).await;
+    let total_us: u128 = r.max_latencies_us.iter().sum();
+    let ops_sec = if total_us > 0 { 1_000_000.0 * rounds as f64 / total_us as f64 } else { 0.0 };
+    ScaleRow { watchers, conns, ops_sec, p50_us: r.p50(), p99_us: r.p99() }
+}
+
+/// Run the full scalability sweep for the given watcher counts and mux factor.
+async fn bench_scale_sweep(url: &str, watcher_counts: &[usize], mux: usize, quick: bool) -> Vec<ScaleRow> {
+    let mut rows = Vec::new();
+    for &w in watcher_counts {
+        let rounds = scale_rounds(w, quick);
+        // Brief warmup before each measurement.
+        if w == 0 {
+            bench_baseline_sodp(url, 20).await;
+        } else {
+            bench_fanout_sodp_at(url, w, mux, 5).await;
+        }
+        let row = if w == 0 {
+            bench_baseline_sodp(url, rounds).await
+        } else {
+            bench_scale_row(url, w, mux, rounds).await
+        };
+        rows.push(row);
+    }
+    rows
+}
+
 // ─── output helpers ───────────────────────────────────────────────────────────
 
 /// Index of the minimum value (used to find the winner for "less is better" metrics).
@@ -402,6 +470,70 @@ fn winner_max_f64(vals: &[f64]) -> usize {
 /// Format a value; append " ★" when it is the winner.
 fn cell(val: impl std::fmt::Display, is_winner: bool) -> String {
     if is_winner { format!("{val} ★") } else { val.to_string() }
+}
+
+/// Format a µs latency value as "NNNµs", "N.Nms", or "N.Ns".
+fn fmt_lat(us: u128) -> String {
+    if us < 1_000 {
+        format!("{}µs", us)
+    } else if us < 1_000_000 {
+        format!("{:.1}ms", us as f64 / 1_000.0)
+    } else {
+        format!("{:.2}s", us as f64 / 1_000_000.0)
+    }
+}
+
+/// Format ops/sec with comma thousands separator ("52,559", "1,850", "380").
+fn fmt_ops(ops: f64) -> String {
+    let s = (ops.round() as u64).to_string();
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    let mut out = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 { out.push(','); }
+        out.push(c);
+    }
+    out
+}
+
+fn print_scale_table(title: &str, rows: &[ScaleRow]) {
+    println!("\n  {title}");
+    println!("  {:>8}  {:>6}  {:>12}  {:>10}  {:>10}", "watchers", "conns", "ops/sec", "P50", "P99");
+    println!("  {:─<8}  {:─<6}  {:─<12}  {:─<10}  {:─<10}", "", "", "", "", "");
+    for r in rows {
+        println!(
+            "  {:>8}  {:>6}  {:>12}  {:>10}  {:>10}",
+            r.watchers, r.conns, fmt_ops(r.ops_sec), fmt_lat(r.p50_us), fmt_lat(r.p99_us),
+        );
+    }
+}
+
+fn print_scale_comparison(title: &str, rust: &[ScaleRow], go: &[ScaleRow]) {
+    println!("\n  {title}");
+    println!(
+        "  {:>8}  {:>6} │ {:>10} {:>8} {:>8} │ {:>10} {:>8} {:>8}",
+        "watchers", "conns",
+        "Rust op/s", "P50", "P99",
+        "Go op/s",   "P50", "P99",
+    );
+    println!(
+        "  {:─<8}  {:─<6}─┼─{:─<10}─{:─<8}─{:─<8}─┼─{:─<10}─{:─<8}─{:─<8}",
+        "", "", "", "", "", "", "", "",
+    );
+    let len = rust.len().max(go.len());
+    for i in 0..len {
+        let (rw, rc) = rust.get(i).map(|r| (r.watchers, r.conns)).unwrap_or((0, 0));
+        let (ro, rp50, rp99) = rust.get(i)
+            .map(|r| (fmt_ops(r.ops_sec), fmt_lat(r.p50_us), fmt_lat(r.p99_us)))
+            .unwrap_or_else(|| ("—".into(), "—".into(), "—".into()));
+        let (go_o, go_p50, go_p99) = go.get(i)
+            .map(|r| (fmt_ops(r.ops_sec), fmt_lat(r.p50_us), fmt_lat(r.p99_us)))
+            .unwrap_or_else(|| ("—".into(), "—".into(), "—".into()));
+        println!(
+            "  {:>8}  {:>6} │ {:>10} {:>8} {:>8} │ {:>10} {:>8} {:>8}",
+            rw, rc, ro, rp50, rp99, go_o, go_p50, go_p99,
+        );
+    }
 }
 
 // ─── output ───────────────────────────────────────────────────────────────────
@@ -474,6 +606,16 @@ struct FanoutResult {
     total_bytes_per_round: Vec<usize>,
 }
 
+// ─── scalability sweep ────────────────────────────────────────────────────────
+
+struct ScaleRow {
+    watchers: usize,
+    conns:    usize,
+    ops_sec:  f64,
+    p50_us:   u128,
+    p99_us:   u128,
+}
+
 impl FanoutResult {
     fn p50(&self)  -> u128 { percentile(&self.max_latencies_us, 50) }
     fn p99(&self)  -> u128 { percentile(&self.max_latencies_us, 99) }
@@ -515,39 +657,56 @@ async fn collect_receipts(
 }
 
 // ── SODP fanout ───────────────────────────────────────────────────────────────
+//
+// mux > 1 opens fewer physical WebSocket connections, each carrying multiple
+// independent WATCH subscriptions (different stream_ids).  The server delivers
+// one DELTA per subscription per mutation, so the total report count per round
+// is unchanged (`watchers`).  Fewer connections means less OS/scheduler
+// overhead, tighter TCP coalescing, and far fewer tokio tasks.
 
-async fn bench_fanout_sodp(watchers: usize, rounds: usize) -> FanoutResult {
+async fn bench_fanout_sodp_at(url: &str, watchers: usize, mux: usize, rounds: usize) -> FanoutResult {
+    let mux   = mux.max(1);
+    let conns = watchers.div_ceil(mux); // physical WebSocket connections
     let (report_tx, mut report_rx) =
         tokio::sync::mpsc::unbounded_channel::<(Instant, usize)>();
 
-    for _ in 0..watchers {
-        let tx = report_tx.clone();
+    for c in 0..conns {
+        let tx  = report_tx.clone();
+        let url = url.to_owned();
+        // Last connection may carry fewer subscriptions if watchers % mux != 0.
+        let subs = if (c + 1) * mux <= watchers { mux } else { watchers - c * mux };
         tokio::spawn(async move {
-            let (mut ws, _) = connect_async("ws://127.0.0.1:7777").await.unwrap();
+            let (mut ws, _) = connect_async(&url).await.unwrap();
             ws.next().await; // HELLO
-            let watch = sodp::frame::Frame {
-                frame_type: types::WATCH,
-                stream_id:  0,
-                seq:        0,
-                body:       serde_json::json!({ "state": "fanout.sodp" }),
-            };
-            ws.send(WsMsg::Binary(watch.encode().unwrap())).await.unwrap();
-            ws.next().await; // STATE_INIT
 
-            // Each mutation produces exactly one DELTA for this watcher.
+            // Open `subs` independent WATCH subscriptions; each gets a unique
+            // stream_id allocated by the server (we send stream_id=0).
+            for _ in 0..subs {
+                let watch = sodp::frame::Frame {
+                    frame_type: types::WATCH,
+                    stream_id:  0,
+                    seq:        0,
+                    body:       serde_json::json!({ "state": "fanout.sodp" }),
+                };
+                ws.send(WsMsg::Binary(watch.encode().unwrap())).await.unwrap();
+                ws.next().await; // STATE_INIT for this subscription
+            }
+
+            // After setup every incoming binary frame is a DELTA (one per sub per mutation).
             while let Some(Ok(WsMsg::Binary(bytes))) = ws.next().await {
-                let n = bytes.len();
-                let _ = tx.send((Instant::now(), n));
+                let _ = tx.send((Instant::now(), bytes.len()));
             }
         });
     }
     drop(report_tx);
-    sleep(Duration::from_millis(600)).await; // let all watchers subscribe
+    // Scale sleep with connection count: each connection needs connect+HELLO+N×(WATCH+STATE_INIT).
+    let setup_ms = (conns as u64 * 6).max(600);
+    sleep(Duration::from_millis(setup_ms)).await;
 
-    let (mut writer, _) = connect_async("ws://127.0.0.1:7777").await.unwrap();
+    let (mut writer, _) = connect_async(url).await.unwrap();
     writer.next().await; // HELLO  (writer never WATCHes — only sends mutations)
 
-    let mut max_latencies_us     = Vec::with_capacity(rounds);
+    let mut max_latencies_us      = Vec::with_capacity(rounds);
     let mut total_bytes_per_round = Vec::with_capacity(rounds);
 
     for r in 0..rounds as u64 {
@@ -564,19 +723,102 @@ async fn bench_fanout_sodp(watchers: usize, rounds: usize) -> FanoutResult {
 
         let send_time = Instant::now();
         writer.send(WsMsg::Binary(call.encode().unwrap())).await.unwrap();
-        writer.next().await; // consume RESULT (writer is not subscribed, no DELTA)
+        writer.next().await; // consume RESULT
 
+        // collect_receipts expects exactly `watchers` reports:
+        // conns connections × subs subscriptions each = watchers total.
         let (max_us, total_bytes) =
             collect_receipts(&mut report_rx, watchers, send_time).await;
         max_latencies_us.push(max_us);
         total_bytes_per_round.push(total_bytes);
     }
 
-    FanoutResult {
-        name: "SODP (delta)".into(),
-        max_latencies_us,
-        total_bytes_per_round,
+    let label = if mux == 1 {
+        "SODP (delta)".into()
+    } else {
+        format!("mux={mux} ({conns} conns)")
+    };
+    FanoutResult { name: label, max_latencies_us, total_bytes_per_round }
+}
+
+async fn bench_fanout_sodp(watchers: usize, mux: usize, rounds: usize) -> FanoutResult {
+    bench_fanout_sodp_at("ws://127.0.0.1:7777", watchers, mux, rounds).await
+}
+
+// ── SODP mux matrix ───────────────────────────────────────────────────────────
+
+struct MuxResult {
+    mux:   usize,
+    conns: usize,
+    r:     FanoutResult,
+}
+
+async fn bench_mux_matrix(watchers: usize, rounds: usize) -> Vec<MuxResult> {
+    // Candidate mux values: 1, 5, 10, 50, 100 — filtered to ≤ watchers.
+    let candidates: Vec<usize> = [1, 5, 10, 50, 100]
+        .into_iter()
+        .filter(|&m| m <= watchers)
+        .collect();
+
+    let mut out = Vec::new();
+    for &mux in &candidates {
+        let conns = watchers.div_ceil(mux);
+        // Warmup
+        bench_fanout_sodp(watchers, mux, 30).await;
+        let r = bench_fanout_sodp(watchers, mux, rounds).await;
+        out.push(MuxResult { mux, conns, r });
     }
+    out
+}
+
+fn print_mux_matrix(results: &[MuxResult], watchers: usize, rounds: usize) {
+    let p50s: Vec<u128> = results.iter().map(|r| r.r.p50()).collect();
+    let p99s: Vec<u128> = results.iter().map(|r| r.r.p99()).collect();
+    let wi_p50 = winner_min(&p50s);
+    let wi_p99 = winner_min(&p99s);
+
+    println!(
+        "\n── SODP mux matrix: {watchers} logical watchers, 1 writer, {rounds} rounds ─────────────"
+    );
+    println!("   Each row is the same {watchers} subscriptions on fewer physical connections.\n");
+    println!(
+        "┌{0}┬{1}┬{2}┬{2}┐",
+        "─".repeat(10), "─".repeat(12), "─".repeat(14),
+    );
+    println!(
+        "│ {:<8} │ {:>10} │ {:>12} │ {:>12} │",
+        "mux", "conns", "P50 µs (↓)", "P99 µs (↓)",
+    );
+    println!(
+        "├{0}┼{1}┼{2}┼{2}┤",
+        "─".repeat(10), "─".repeat(12), "─".repeat(14),
+    );
+    for (i, mr) in results.iter().enumerate() {
+        println!(
+            "│ {:<8} │ {:>10} │ {:>12} │ {:>12} │",
+            format!("{}×", mr.mux),
+            mr.conns,
+            cell(mr.r.p50(), i == wi_p50),
+            cell(mr.r.p99(), i == wi_p99),
+        );
+    }
+    println!(
+        "└{0}┴{1}┴{2}┴{2}┘",
+        "─".repeat(10), "─".repeat(12), "─".repeat(14),
+    );
+
+    let baseline_p50 = results[0].r.p50();
+    let best_p50     = results[wi_p50].r.p50();
+    if baseline_p50 > 0 && wi_p50 != 0 {
+        println!(
+            "\n  Best mux={} ({} conns): {:.1}× lower P50 than mux=1 ({} conns)",
+            results[wi_p50].mux,
+            results[wi_p50].conns,
+            baseline_p50 as f64 / best_p50 as f64,
+            results[0].conns,
+        );
+    }
+    println!("  ↓ less is better   ★ = winner\n");
 }
 
 // ── REST SSE fanout ───────────────────────────────────────────────────────────
@@ -870,12 +1112,14 @@ async fn main() {
         .with_env_filter("error")
         .init();
 
-    // BENCH_QUICK=1 → fewer iterations, no fanout; used for profiling runs.
+    // BENCH_QUICK=1  → fewer iterations, no fanout; used for profiling runs.
+    // BENCH_SCALE=1  → skip single-client + fanout; run only the scalability sweep.
     let quick         = std::env::var("BENCH_QUICK").is_ok();
+    let scale_only    = std::env::var("BENCH_SCALE").is_ok();
     let warmup        = if quick {  50 } else { 500 };
     let iters         = if quick { 300 } else { 2_000 };
     let fanout_watchers = 100usize;
-    let fanout_rounds = if quick {   0 } else { 300 };
+    let fanout_rounds = if quick || scale_only { 0 } else { 300 };
 
     println!("Starting servers...");
     tokio::spawn(async { SodpServer::new().listen("127.0.0.1:7777", tokio_util::sync::CancellationToken::new()).await.unwrap() });
@@ -883,44 +1127,105 @@ async fn main() {
     tokio::spawn(start_grpc_server("127.0.0.1:7779"));
     sleep(Duration::from_millis(300)).await;
 
-    // ── single-client latency / byte efficiency ───────────────────────────────
-    println!("Warming up ({warmup} iterations each)...");
-    bench_sodp(warmup).await;
-    bench_rest(warmup).await;
-    bench_grpc(warmup).await;
+    if !scale_only {
+        // ── single-client latency / byte efficiency ───────────────────────────
+        println!("Warming up ({warmup} iterations each)...");
+        bench_sodp(warmup).await;
+        bench_rest(warmup).await;
+        bench_grpc(warmup).await;
 
-    println!("Benchmarking single-client ({iters} iterations each)...");
-    let results = vec![
-        bench_sodp(iters).await,
-        bench_rest(iters).await,
-        bench_grpc(iters).await,
-    ];
-    println!("\n── Single client ────────────────────────────────────────────────────────────");
-    print_results(&results);
-
-    if fanout_rounds == 0 {
-        println!("\n(fanout skipped in quick mode)");
-        return;
+        println!("Benchmarking single-client ({iters} iterations each)...");
+        let results = vec![
+            bench_sodp(iters).await,
+            bench_rest(iters).await,
+            bench_grpc(iters).await,
+        ];
+        println!("\n── Single client ────────────────────────────────────────────────────────────");
+        print_results(&results);
+    } else {
+        // Brief server warmup even in scale-only mode.
+        println!("Warming up...");
+        bench_sodp(100).await;
     }
 
-    // ── fanout ────────────────────────────────────────────────────────────────
-    println!(
-        "\nFanout warmup ({fanout_watchers} watchers, 50 rounds each)..."
-    );
-    bench_fanout_sodp(fanout_watchers, 50).await;
-    bench_fanout_rest(fanout_watchers, 50).await;
-    bench_fanout_grpc(fanout_watchers, 50).await;
+    // ── SODP scalability sweep ────────────────────────────────────────────────
+    // Shows how fanout overhead scales with subscriber count, and the benefit
+    // of multiplexing many subscriptions onto fewer physical connections.
+    let mux = 100usize;
+    // scale_only uses full watcher counts + higher rounds; quick uses smaller set.
+    let nomux_counts: &[usize] = if quick && !scale_only { &[0, 10, 100, 1000] } else { &[0, 10, 100, 500, 1000] };
+    let mux_counts:   &[usize] = if quick && !scale_only { &[0, 100, 1000]     } else { &[0, 100, 500, 1000] };
 
-    println!(
-        "Fanout benchmark ({fanout_watchers} watchers, {fanout_rounds} rounds each)..."
-    );
-    let fanout_results = vec![
-        bench_fanout_sodp(fanout_watchers, fanout_rounds).await,
-        bench_fanout_rest(fanout_watchers, fanout_rounds).await,
-        bench_fanout_grpc(fanout_watchers, fanout_rounds).await,
-    ];
-    print_fanout_results(&fanout_results, fanout_watchers);
+    const RUST_URL: &str = "ws://127.0.0.1:7777";
+    const GO_URL:   &str = "ws://127.0.0.1:7780";
+    let full = !quick || scale_only;
 
-    // ── RESUME correctness verification ───────────────────────────────────────
-    test_resume().await;
+    println!("\nScale sweep: mux=1...");
+    let nomux_rows = bench_scale_sweep(RUST_URL, nomux_counts, 1, !full).await;
+    println!("Scale sweep: mux={mux}...");
+    let mux_rows = bench_scale_sweep(RUST_URL, mux_counts, mux, !full).await;
+
+    println!("\n── SODP scalability ────────────────────────────────────────────────────────");
+    println!("   ops/sec = mutations/s sustained while waiting for all watchers to receive");
+    print_scale_table("Without mux (1 connection per watcher):", &nomux_rows);
+    print_scale_table(&format!("With mux={mux} ({mux} subscriptions per connection):"), &mux_rows);
+
+    // ── Rust vs Go comparison ─────────────────────────────────────────────────
+    if std::env::var("BENCH_COMPARE").is_ok() {
+        println!("\n── Rust vs Go comparison ───────────────────────────────────────────────────");
+        println!("   Starting sodp-go server on {GO_URL}...");
+        let mut go_proc = std::process::Command::new("go")
+            .args(["run", "./cmd/sodp-server", "-addr", "127.0.0.1:7780",
+                   "-rate", "1000000", "-backpressure", "4096"])
+            .current_dir("sodp-go")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("failed to start sodp-go (is Go installed?)");
+        // go run compiles then starts — allow enough time.
+        sleep(Duration::from_secs(8)).await;
+
+        println!("   Go server ready. Running sweeps...");
+        println!("   mux=1...");
+        let go_nomux = bench_scale_sweep(GO_URL, nomux_counts, 1, !full).await;
+        println!("   mux={mux}...");
+        let go_mux   = bench_scale_sweep(GO_URL, mux_counts,   mux, !full).await;
+
+        go_proc.kill().ok();
+
+        print_scale_comparison("mux=1 (1 conn per watcher)", &nomux_rows, &go_nomux);
+        print_scale_comparison(&format!("mux={mux} ({mux} subs per conn)"), &mux_rows, &go_mux);
+    }
+
+    // ── fanout (3-way comparison, mux=1 baseline) ────────────────────────────
+    if fanout_rounds > 0 {
+        println!(
+            "\nFanout warmup ({fanout_watchers} watchers, 50 rounds each)..."
+        );
+        bench_fanout_sodp(fanout_watchers, 1, 50).await;
+        bench_fanout_rest(fanout_watchers, 50).await;
+        bench_fanout_grpc(fanout_watchers, 50).await;
+
+        println!(
+            "Fanout benchmark ({fanout_watchers} watchers, {fanout_rounds} rounds each)..."
+        );
+        let fanout_results = vec![
+            bench_fanout_sodp(fanout_watchers, 1, fanout_rounds).await,
+            bench_fanout_rest(fanout_watchers, fanout_rounds).await,
+            bench_fanout_grpc(fanout_watchers, fanout_rounds).await,
+        ];
+        print_fanout_results(&fanout_results, fanout_watchers);
+    }
+
+    if !scale_only {
+        // ── SODP mux matrix ───────────────────────────────────────────────────
+        let mux_watchers = if quick { fanout_watchers } else { 500 };
+        let mux_rounds   = if quick { 50 } else { fanout_rounds };
+        println!("\nMux matrix ({mux_watchers} watchers, {mux_rounds} rounds each)...");
+        let mux_results = bench_mux_matrix(mux_watchers, mux_rounds).await;
+        print_mux_matrix(&mux_results, mux_watchers, mux_rounds);
+
+        // ── RESUME correctness verification ───────────────────────────────────
+        test_resume().await;
+    }
 }

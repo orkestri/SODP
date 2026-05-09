@@ -64,6 +64,12 @@ var (
 	flagWatcherList    = flag.String("watcher-list", "0,10,100,500,1000", "comma-separated watcher counts for matrix mode")
 	flagMatrixDuration = flag.Duration("matrix-duration", 10*time.Second, "duration per matrix cell")
 	flagMatrixWarmup   = flag.Duration("matrix-warmup", 2*time.Second, "warmup per matrix cell")
+
+	// Multiplexing: pack multiple WATCH subscriptions onto fewer physical connections.
+	// With -mux N, numWatchers/N connections are used, each subscribing to the same
+	// key N times (N stream_ids). The server's write-pool drains all N pending DELTAs
+	// in one goroutine pass, so OS-level TCP sends drop from numWatchers to numWatchers/N.
+	flagMux = flag.Int("mux", 1, "WATCH subscriptions per watcher connection (1 = no mux)")
 )
 
 // ── connection ────────────────────────────────────────────────────────────────
@@ -279,25 +285,35 @@ func (wg *watchGroup) closeAll() {
 	}
 }
 
-func startWatchers(wsURL string, n int) *watchGroup {
-	wg := &watchGroup{conns: make([]*conn, n)}
+// startWatchers connects numWatchers logical subscriptions using ceiling(numWatchers/mux)
+// physical WebSocket connections. Each connection sends mux WATCH frames for the same
+// key (with distinct stream_ids) so the server writes mux DELTAs per mutation to one
+// TCP connection — the pool drains them all in one batch.
+func startWatchers(wsURL string, numWatchers, mux int) *watchGroup {
+	numConns := (numWatchers + mux - 1) / mux
+	wg := &watchGroup{conns: make([]*conn, numConns)}
 	var mu sync.Mutex
 	var eg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := 0; i < numConns; i++ {
 		eg.Add(1)
-		go func(id int) {
+		go func(connID int) {
 			defer eg.Done()
 			c := dialURL(wsURL)
 			mu.Lock()
-			wg.conns[id] = c
+			wg.conns[connID] = c
 			mu.Unlock()
 			readHello(c)
-			c.send(sodp.Frame{
-				Type:     sodp.FrameWatch,
-				StreamID: uint32(1000 + id),
-				Body:     map[string]any{"state": *flagKey},
-			})
-			c.read() // STATE_INIT
+			// Subscribe mux times to the same key, each with a unique stream_id.
+			// The server fanout sends mux DELTAs to this session per mutation.
+			for sub := 0; sub < mux; sub++ {
+				streamID := uint32(1000 + connID*mux + sub)
+				c.send(sodp.Frame{
+					Type:     sodp.FrameWatch,
+					StreamID: streamID,
+					Body:     map[string]any{"state": *flagKey},
+				})
+				c.read() // STATE_INIT
+			}
 		}(i)
 	}
 	eg.Wait()
@@ -332,11 +348,11 @@ type result struct {
 	goroutines   int
 }
 
-func runBench(wsURL string, numWatchers int, warmup, duration time.Duration) result {
+func runBench(wsURL string, numWatchers, mux int, warmup, duration time.Duration) result {
 	// Connect watchers first.
 	var wg *watchGroup
 	if numWatchers > 0 {
-		wg = startWatchers(wsURL, numWatchers)
+		wg = startWatchers(wsURL, numWatchers, mux)
 		time.Sleep(100 * time.Millisecond) // let subscriptions propagate
 	}
 
@@ -446,17 +462,27 @@ func printSummary(label string, r result, numWatchers int) {
 
 func singleRun(wsURL string) {
 	numWatchers := *flagWatchers
+	mux := *flagMux
+	if mux < 1 {
+		mux = 1
+	}
+	numConns := (numWatchers + mux - 1) / mux
 	fmt.Printf("writers:     %d  (pipeline: %d  →  %d max in-flight)\n",
 		*flagWriters, *flagPipeline, *flagWriters**flagPipeline)
-	fmt.Printf("watchers:    %d\n", numWatchers)
+	if mux == 1 {
+		fmt.Printf("watchers:    %d  (1 subscription per connection)\n", numWatchers)
+	} else {
+		fmt.Printf("watchers:    %d  (mux %d → %d connections × %d subs)\n",
+			numWatchers, mux, numConns, mux)
+	}
 	fmt.Printf("duration:    %v  (warmup: %v)\n", *flagDuration, *flagWarmup)
 	fmt.Printf("key:         %s\n\n", *flagKey)
 
 	// Connect watchers up front so we can show progress while they connect.
 	var wg *watchGroup
 	if numWatchers > 0 {
-		fmt.Printf("connecting %d watchers... ", numWatchers)
-		wg = startWatchers(wsURL, numWatchers)
+		fmt.Printf("connecting %d watchers (%d connections)... ", numWatchers, numConns)
+		wg = startWatchers(wsURL, numWatchers, mux)
 		time.Sleep(100 * time.Millisecond)
 		fmt.Printf("ok\n")
 	}
@@ -588,26 +614,38 @@ func parseWatcherList(s string) []int {
 
 func matrixRun(wsURL string) {
 	counts := parseWatcherList(*flagWatcherList)
+	mux := *flagMux
+	if mux < 1 {
+		mux = 1
+	}
 
 	fmt.Printf("writers: %d  pipeline: %d  →  %d max in-flight\n",
 		*flagWriters, *flagPipeline, *flagWriters**flagPipeline)
 	fmt.Printf("duration per cell: %v  warmup: %v\n", *flagMatrixDuration, *flagMatrixWarmup)
+	if mux > 1 {
+		fmt.Printf("mux: %d subscriptions per connection\n", mux)
+	}
 	fmt.Printf("key: %s\n\n", *flagKey)
-	fmt.Printf("%-10s  %-14s  %-10s  %-10s  %-10s  %-14s  %-10s\n",
-		"watchers", "ops/sec", "P50", "P95", "P99", "bytes/watcher", "heap")
-	fmt.Printf("%s\n", strings.Repeat("─", 86))
+	fmt.Printf("%-10s  %-8s  %-14s  %-10s  %-10s  %-10s  %-14s  %-10s\n",
+		"watchers", "conns", "ops/sec", "P50", "P95", "P99", "bytes/watcher", "heap")
+	fmt.Printf("%s\n", strings.Repeat("─", 98))
 
 	for _, n := range counts {
-		r := runBench(wsURL, n, *flagMatrixWarmup, *flagMatrixDuration)
+		r := runBench(wsURL, n, mux, *flagMatrixWarmup, *flagMatrixDuration)
 		throughput := float64(r.mutations) / r.duration.Seconds()
+		numConns := (n + mux - 1) / mux
+		if n == 0 {
+			numConns = 0
+		}
 
 		bpw := "—"
 		if n > 0 && r.mutations > 0 {
 			bpw = fmt.Sprintf("%d B", r.watcherBytes/r.mutations/int64(n))
 		}
 
-		fmt.Printf("%-10d  %-14s  %-10s  %-10s  %-10s  %-14s  %.1f MB\n",
+		fmt.Printf("%-10d  %-8d  %-14s  %-10s  %-10s  %-10s  %-14s  %.1f MB\n",
 			n,
+			numConns,
 			commaf(int(throughput))+" ops/s",
 			formatDur(pct(r.latencies, 50)),
 			formatDur(pct(r.latencies, 95)),

@@ -107,10 +107,12 @@ pub struct SodpServer {
     pub rate_watches_per_sec: Option<u32>,
     /// Redis cluster for cross-node state sync and fanout.  `None` = single-node mode.
     pub cluster: Option<Arc<RedisCluster>>,
+    /// Bounded channel capacity for backpressure (`SODP_BACKPRESSURE_LIMIT`).
+    pub backpressure_limit: usize,
 }
 
 /// Read connection / frame-size / ping / rate limits from environment variables.
-fn read_limits() -> (Option<usize>, usize, u64, Option<u32>, Option<u32>) {
+fn read_limits() -> (Option<usize>, usize, u64, Option<u32>, Option<u32>, usize) {
     let max_connections = std::env::var("SODP_MAX_CONNECTIONS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok());
@@ -131,12 +133,31 @@ fn read_limits() -> (Option<usize>, usize, u64, Option<u32>, Option<u32>) {
     let rate_watches = std::env::var("SODP_RATE_WATCHES_PER_SEC")
         .ok()
         .and_then(|s| s.parse::<u32>().ok());
-    (max_connections, max_frame_bytes, ws_ping_interval, rate_writes, rate_watches)
+    // SODP_BACKPRESSURE_LIMIT — bounded channel capacity per session (default 1024).
+    let backpressure_limit = std::env::var("SODP_BACKPRESSURE_LIMIT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(crate::fanout::DEFAULT_BACKPRESSURE_LIMIT);
+    (max_connections, max_frame_bytes, ws_ping_interval, rate_writes, rate_watches, backpressure_limit)
+}
+
+/// Convert an outbound message to a WebSocket `Message`, returning `None` on
+/// encode error (the frame is silently dropped so the connection stays open).
+fn to_ws_msg(outbound: OutboundMsg) -> Option<Message> {
+    match outbound {
+        OutboundMsg::Frame(f) => match f.encode() {
+            Ok(bytes) => Some(Message::Binary(bytes)),
+            Err(e) => { warn!("Frame encode error: {e}"); None }
+        }
+        OutboundMsg::Bytes(b) => Some(Message::Binary(b)),
+        OutboundMsg::ArcDelta { stream_id, body_mp } =>
+            Some(Message::Binary(frame::delta_bytes(stream_id, 0, &body_mp))),
+    }
 }
 
 impl SodpServer {
     pub fn new() -> Arc<Self> {
-        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec) = read_limits();
+        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec, backpressure_limit) = read_limits();
         Arc::new(SodpServer {
             state:                StateStore::new(),
             fanout:               FanoutBus::new(),
@@ -150,11 +171,12 @@ impl SodpServer {
             rate_writes_per_sec,
             rate_watches_per_sec,
             cluster:              None,
+            backpressure_limit,
         })
     }
 
     pub fn new_persistent(log_dir: &std::path::Path) -> anyhow::Result<Arc<Self>> {
-        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec) = read_limits();
+        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec, backpressure_limit) = read_limits();
         Ok(Arc::new(SodpServer {
             state:                StateStore::open(log_dir)?,
             fanout:               FanoutBus::new(),
@@ -168,6 +190,7 @@ impl SodpServer {
             rate_writes_per_sec,
             rate_watches_per_sec,
             cluster:              None,
+            backpressure_limit,
         }))
     }
 
@@ -176,7 +199,7 @@ impl SodpServer {
         log_dir:     Option<&std::path::Path>,
         schema_path: &std::path::Path,
     ) -> anyhow::Result<Arc<Self>> {
-        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec) = read_limits();
+        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec, backpressure_limit) = read_limits();
         let schema = SchemaRegistry::from_file(schema_path)?;
         let state  = match log_dir {
             Some(dir) => StateStore::open(dir)?,
@@ -195,6 +218,7 @@ impl SodpServer {
             rate_writes_per_sec,
             rate_watches_per_sec,
             cluster:              None,
+            backpressure_limit,
         }))
     }
 
@@ -253,10 +277,22 @@ impl SodpServer {
         // Responses to the current session's own requests (STATE_INIT, DELTA for
         // own-watched keys, RESULT, errors) are written directly to ws_tx —
         // eliminating the channel hop and the extra select! loop iteration.
-        let (tx, mut rx) = mpsc::unbounded_channel::<OutboundMsg>();
+        //
+        // Bounded channel provides backpressure: when a slow consumer falls behind
+        // by `backpressure_limit` messages, the FanoutBus cancels its session.
+        let (tx, mut rx) = mpsc::channel::<OutboundMsg>(self.backpressure_limit);
+        let slow_cancel = CancellationToken::new();
 
         let auth_required = self.jwt_config.is_some();
-        ws_tx.send(Message::Binary(frame::hello(auth_required).encode()?)).await?;
+        let capabilities = serde_json::json!({
+            "rate_limit_writes":  self.rate_writes_per_sec,
+            "rate_limit_watches": self.rate_watches_per_sec,
+            "multi_watch": true,
+            "params": true,
+            "resume": true,
+            "backpressure_limit": self.backpressure_limit,
+        });
+        ws_tx.send(Message::Binary(frame::hello(auth_required, capabilities).encode()?)).await?;
 
         // If auth is enabled, complete the JWT handshake before the event loop.
         let opt_claims: Option<Claims> = if let Some(config) = &self.jwt_config {
@@ -312,16 +348,24 @@ impl SodpServer {
         loop {
             tokio::select! {
                 // ── outbound: fanout DELTAs from other sessions ───────────────
+                // Coalescing: feed the first message, drain all immediately
+                // available messages with try_recv, then flush once.  This
+                // batches multiple DELTAs into a single TCP segment and
+                // dramatically reduces syscall count under high fanout load.
                 msg = rx.recv() => {
                     let Some(outbound) = msg else { break };
-                    let result = match outbound {
-                        OutboundMsg::Frame(f) => match f.encode() {
-                            Ok(bytes) => ws_tx.send(Message::Binary(bytes)).await,
-                            Err(e) => { warn!("Frame encode error: {e}"); continue; }
-                        },
-                        OutboundMsg::Bytes(b) => ws_tx.send(Message::Binary(b)).await,
+                    let alive = 'coalesce: loop {
+                        if let Some(m) = to_ws_msg(outbound) {
+                            if ws_tx.feed(m).await.is_err() { break 'coalesce false; }
+                        }
+                        while let Ok(more) = rx.try_recv() {
+                            if let Some(m) = to_ws_msg(more) {
+                                if ws_tx.feed(m).await.is_err() { break 'coalesce false; }
+                            }
+                        }
+                        break 'coalesce ws_tx.flush().await.is_ok();
                     };
-                    if result.is_err() { break; }
+                    if !alive { break; }
                 }
 
                 // ── inbound: new WebSocket frame from the client ──────────────
@@ -337,7 +381,7 @@ impl SodpServer {
                             }
                             match Frame::decode(&bytes) {
                                 Ok(frame) => {
-                                    if self.handle_frame(frame, &mut session, &mut ws_tx, &tx).await.is_err() {
+                                    if self.handle_frame(frame, &mut session, &mut ws_tx, &tx, &slow_cancel).await.is_err() {
                                         break;
                                     }
                                 }
@@ -379,6 +423,12 @@ impl SodpServer {
                     }
                     awaiting_pong = true;
                     if ws_tx.send(Message::Ping(vec![])).await.is_err() { break; }
+                }
+
+                // ── backpressure: slow consumer eviction
+                _ = slow_cancel.cancelled() => {
+                    warn!("Session {session_id} evicted (slow consumer)");
+                    break;
                 }
             }
         }
@@ -511,7 +561,8 @@ impl SodpServer {
         frame: Frame,
         session: &mut Session,
         ws_tx: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        tx: &mpsc::UnboundedSender<OutboundMsg>,
+        tx: &mpsc::Sender<OutboundMsg>,
+        slow_cancel: &CancellationToken,
     ) -> anyhow::Result<()> {
         let type_label: &'static str = match frame.frame_type {
             types::WATCH     => "watch",
@@ -525,8 +576,8 @@ impl SodpServer {
         metrics::counter!("sodp_frames_rx_total", "type" => type_label).increment(1);
 
         match frame.frame_type {
-            types::WATCH     => self.handle_watch(frame, session, ws_tx, tx).await,
-            types::RESUME    => self.handle_resume(frame, session, ws_tx, tx).await,
+            types::WATCH     => self.handle_watch(frame, session, ws_tx, tx, slow_cancel).await,
+            types::RESUME    => self.handle_resume(frame, session, ws_tx, tx, slow_cancel).await,
             types::UNWATCH   => self.handle_unwatch(frame, session),
             types::CALL      => self.handle_call(frame, session, ws_tx).await,
             types::ACK       => {
@@ -550,7 +601,8 @@ impl SodpServer {
         frame: Frame,
         session: &mut Session,
         ws_tx: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        tx: &mpsc::UnboundedSender<OutboundMsg>,
+        tx: &mpsc::Sender<OutboundMsg>,
+        slow_cancel: &CancellationToken,
     ) -> anyhow::Result<()> {
         if let Some(ref mut lim) = session.watch_limiter
             && !lim.allow() {
@@ -562,45 +614,64 @@ impl SodpServer {
                 return Ok(());
             }
 
-        let state_key = match frame.body.get("state").and_then(|v| v.as_str()) {
-            Some(k) => k.to_string(),
-            None => {
-                let seq = session.next_seq();
-                ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 400, "WATCH: missing 'state' key").encode()?
-                )).await?;
-                return Ok(());
-            }
+        // Multi-key: `states` array takes priority over single `state` string.
+        let keys: Vec<String> = if let Some(arr) = frame.body.get("states").and_then(|v| v.as_array()) {
+            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+        } else if let Some(k) = frame.body.get("state").and_then(|v| v.as_str()) {
+            vec![k.to_string()]
+        } else {
+            let seq = session.next_seq();
+            ws_tx.send(Message::Binary(
+                frame::error(frame.stream_id, seq, 400, "WATCH: missing 'state' or 'states' key").encode()?
+            )).await?;
+            return Ok(());
         };
 
-        if let Some(acl) = &self.acl
-            && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
-                let seq = session.next_seq();
-                ws_tx.send(Message::Binary(
-                    frame::error(frame.stream_id, seq, 403, "forbidden").encode()?
-                )).await?;
-                return Ok(());
-            }
+        let params = frame.body.get("params").cloned();
 
+        for state_key in keys {
+            // Per-key ACL check — skip forbidden keys with ERROR 403.
+            if let Some(acl) = &self.acl
+                && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
+                    let seq = session.next_seq();
+                    ws_tx.send(Message::Binary(
+                        frame::error(0, seq, 403, &format!("forbidden: {state_key}")).encode()?
+                    )).await?;
+                    continue;
+                }
+
+            self.subscribe_key(&state_key, params.clone(), session, ws_tx, tx, slow_cancel).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Subscribe a session to a single state key — shared by handle_watch and handle_resume.
+    async fn subscribe_key(
+        &self,
+        state_key: &str,
+        params: Option<serde_json::Value>,
+        session: &mut Session,
+        ws_tx: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+        tx: &mpsc::Sender<OutboundMsg>,
+        slow_cancel: &CancellationToken,
+    ) -> anyhow::Result<()> {
         let stream_id = session.allocate_stream();
-        session.add_watch(stream_id, state_key.clone());
+        session.add_watch(stream_id, state_key.to_string(), params.clone());
 
-        // Register subscriber so future broadcasts reach this session.
         self.fanout.subscribe(
-            state_key.clone(),
-            Subscriber { session_id: session.id.clone(), stream_id, tx: tx.clone() },
+            state_key.to_string(),
+            Subscriber { session_id: session.id.clone(), stream_id, tx: tx.clone(), cancel: slow_cancel.clone() },
         );
 
-        // Send current snapshot.  `initialized: false` when the key has never
-        // been written — lets clients distinguish "not yet set" from null.
-        let (version, value, initialized) = match self.state.get(&state_key) {
+        let (version, value, initialized) = match self.state.get(state_key) {
             Some(e) => (e.version, e.value, true),
             None    => (0, serde_json::Value::Null, false),
         };
 
         let seq = session.next_seq();
         ws_tx.send(Message::Binary(
-            frame::state_init(stream_id, seq, &state_key, version, value, initialized).encode()?
+            frame::state_init(stream_id, seq, state_key, version, value, initialized, params).encode()?
         )).await?;
 
         debug!("Session {} watching '{}' on stream {}", session.id, state_key, stream_id);
@@ -611,15 +682,21 @@ impl SodpServer {
     // --- UNWATCH ---
 
     fn handle_unwatch(&self, frame: Frame, session: &mut Session) -> anyhow::Result<()> {
-        let state_key = match frame.body.get("state").and_then(|v| v.as_str()) {
-            Some(k) => k,
-            None    => return Ok(()), // malformed frame — ignore silently
+        // Multi-key: `states` array takes priority over single `state` string.
+        let keys: Vec<&str> = if let Some(arr) = frame.body.get("states").and_then(|v| v.as_array()) {
+            arr.iter().filter_map(|v| v.as_str()).collect()
+        } else if let Some(k) = frame.body.get("state").and_then(|v| v.as_str()) {
+            vec![k]
+        } else {
+            return Ok(()); // malformed frame — ignore silently
         };
 
-        if let Some(stream_id) = session.watch_stream_id(state_key) {
-            session.remove_watch(stream_id);
-            self.fanout.unsubscribe(state_key, &session.id);
-            debug!("Session {} unwatched '{}'", session.id, state_key);
+        for state_key in keys {
+            if let Some(stream_id) = session.watch_stream_id(state_key) {
+                session.remove_watch(stream_id);
+                self.fanout.unsubscribe(state_key, &session.id);
+                debug!("Session {} unwatched '{}'", session.id, state_key);
+            }
         }
         Ok(())
     }
@@ -631,7 +708,8 @@ impl SodpServer {
         frame: Frame,
         session: &mut Session,
         ws_tx: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        tx: &mpsc::UnboundedSender<OutboundMsg>,
+        tx: &mpsc::Sender<OutboundMsg>,
+        slow_cancel: &CancellationToken,
     ) -> anyhow::Result<()> {
         if let Some(ref mut lim) = session.watch_limiter
             && !lim.allow() {
@@ -667,13 +745,14 @@ impl SodpServer {
             .get("since_version")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
+        let params = frame.body.get("params").cloned();
 
         // Allocate stream and subscribe to live updates — same as WATCH.
         let stream_id = session.allocate_stream();
-        session.add_watch(stream_id, state_key.clone());
+        session.add_watch(stream_id, state_key.clone(), params.clone());
         self.fanout.subscribe(
             state_key.clone(),
-            Subscriber { session_id: session.id.clone(), stream_id, tx: tx.clone() },
+            Subscriber { session_id: session.id.clone(), stream_id, tx: tx.clone(), cancel: slow_cancel.clone() },
         );
 
         // Replay every delta the client missed.
@@ -696,7 +775,7 @@ impl SodpServer {
         };
         let seq = session.next_seq();
         ws_tx.send(Message::Binary(
-            frame::state_init(stream_id, seq, &state_key, version, value, initialized).encode()?
+            frame::state_init(stream_id, seq, &state_key, version, value, initialized, params).encode()?
         )).await?;
 
         debug!(

@@ -31,6 +31,27 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
+  # ── Rust benchmarks ────────────────────────────────────────────────────────
+  benchmark:
+    name: Rust benchmarks (criterion)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run benchmarks
+        run: cargo bench --bench delta --bench codec --bench state -- --output-format bencher | tee bench-results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: bench-results.txt
+          retention-days: 30
+
   # ── TypeScript client (@sodp/client) ────────────────────────────────────────
   typescript-client:
     name: TypeScript client (build · test)

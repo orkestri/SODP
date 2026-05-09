@@ -4,6 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -20,7 +22,11 @@ type Session struct {
 	Sub    string         // JWT "sub" claim; empty if auth is disabled
 	Claims map[string]any // all JWT claims
 
-	Send chan []byte   // outbound pre-encoded frames (buffered)
+	Conn    *websocket.Conn // set by HandleWS after upgrade; read-only thereafter
+	writeMu sync.Mutex      // serialises all writes to Conn (pool workers + pingPump)
+	inPool  atomic.Bool     // true while session is queued in WritePool
+
+	Send chan outMsg   // outbound frames (buffered)
 	Done chan struct{} // closed on disconnect
 
 	mu         sync.Mutex
@@ -39,7 +45,7 @@ func NewSession(id string) *Session {
 	s := &Session{
 		ID:         id,
 		Claims:     make(map[string]any),
-		Send:       make(chan []byte, defaultSessionBuffer),
+		Send:       make(chan outMsg, defaultSessionBuffer),
 		Done:       make(chan struct{}),
 		watches:    make(map[uint32]string),
 		rateLimit:  defaultRateLimit,

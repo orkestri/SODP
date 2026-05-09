@@ -14,10 +14,18 @@ path = "src/main.rs"
 [[bin]]
 name = "bench"
 path = "src/bin/bench.rs"
+required-features = ["bench"]
+
+[[bin]]
+name = "load-test"
+path = "src/bin/load_test.rs"
 
 [lib]
 name = "sodp"
 path = "src/lib.rs"
+
+[features]
+bench = ["dep:axum", "dep:tonic", "dep:prost", "dep:reqwest", "dep:tonic-build", "dep:protoc-bin-vendored"]
 
 [dependencies]
 # async runtime + networking
@@ -28,15 +36,15 @@ futures-util  = "0.3"
 # WebSocket transport (SODP)
 tokio-tungstenite = "0.24"
 
-# REST server
-axum = { version = "0.7", features = ["json"] }
+# REST server (bench only)
+axum = { version = "0.7", features = ["json"], optional = true }
 
-# gRPC server + client
-tonic  = { version = "0.12", features = ["transport"] }
-prost  = "0.13"
+# gRPC server + client (bench only)
+tonic  = { version = "0.12", features = ["transport"], optional = true }
+prost  = { version = "0.13", optional = true }
 
-# HTTP client (REST benchmark)
-reqwest = { version = "0.12", features = ["stream", "json"] }
+# HTTP client (bench only)
+reqwest = { version = "0.12", features = ["stream", "json"], optional = true }
 
 # Serialisation
 serde      = { version = "1", features = ["derive"] }
@@ -70,10 +78,32 @@ redis = { version = "0.27", features = ["aio", "tokio-comp"] }
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "delta"
+harness = false
+
+[[bench]]
+name = "codec"
+harness = false
+
+[[bench]]
+name = "state"
+harness = false
 
 [profile.release]
-debug = 1       # line-number info for flamegraphs; strip = false is the default
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+debug = false
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false
 
 [build-dependencies]
-tonic-build          = "0.12"
-protoc-bin-vendored  = "3"
+tonic-build          = { version = "0.12", optional = true }
+protoc-bin-vendored  = { version = "3", optional = true }

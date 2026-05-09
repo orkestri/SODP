@@ -1,18 +1,26 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::mpsc::UnboundedSender;
-use tracing::error;
+use serde::Serialize;
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::delta::DeltaOp;
-use crate::frame::{self, OutboundMsg};
+use crate::frame::OutboundMsg;
+
+/// Default capacity for the per-session bounded channel.
+/// When the channel is full, the subscriber is considered slow and evicted.
+pub const DEFAULT_BACKPRESSURE_LIMIT: usize = 1024;
 
 /// One active WATCH subscription: a channel back to the owning connection task.
 #[derive(Debug, Clone)]
 pub struct Subscriber {
     pub session_id: String,
     pub stream_id: u32,
-    pub tx: UnboundedSender<OutboundMsg>,
+    pub tx: mpsc::Sender<OutboundMsg>,
+    /// Cancelled when the subscriber is too slow (channel full).
+    pub cancel: CancellationToken,
 }
 
 /// Registry of all active subscriptions, keyed by state name.
@@ -30,14 +38,12 @@ pub struct FanoutBus {
 /// once per mutation, then pass the bytes to `broadcast_encoded` and/or
 /// `frame::delta_bytes` for direct same-session delivery.
 pub fn encode_delta_body(version: u64, ops: &[DeltaOp]) -> Vec<u8> {
-    let ops_value = match serde_json::to_value(ops) {
-        Ok(v) => v,
-        Err(e) => { error!("Failed to serialize delta ops: {e}"); return vec![]; }
-    };
-    rmp_serde::to_vec(&serde_json::json!({
-        "version": version,
-        "ops":     ops_value,
-    })).unwrap_or_default()
+    #[derive(Serialize)]
+    struct DeltaBody<'a> {
+        version: u64,
+        ops: &'a [DeltaOp],
+    }
+    rmp_serde::to_vec_named(&DeltaBody { version, ops }).unwrap_or_default()
 }
 
 impl FanoutBus {
@@ -73,18 +79,20 @@ impl FanoutBus {
     /// `exclude_session`: if `Some(id)`, skip the subscriber whose
     /// `session_id == id`.  Use this when the triggering session will receive
     /// its own DELTA via a direct `ws_tx.send()` call.
+    ///
+    /// Slow subscribers (full channel) are cancelled and removed inline.
     pub fn broadcast_encoded(
         &self,
         state_key: &str,
         body_mp: &[u8],
         exclude_session: Option<&str>,
     ) {
-        let snapshot: Vec<(u32, UnboundedSender<OutboundMsg>)> =
+        let snapshot: Vec<(u32, String, mpsc::Sender<OutboundMsg>, CancellationToken)> =
             match self.subscriptions.get(state_key) {
                 Some(subs) => subs
                     .iter()
                     .filter(|s| exclude_session.is_none_or(|ex| s.session_id != ex))
-                    .map(|s| (s.stream_id, s.tx.clone()))
+                    .map(|s| (s.stream_id, s.session_id.clone(), s.tx.clone(), s.cancel.clone()))
                     .collect(),
                 None => return,
             };
@@ -92,9 +100,24 @@ impl FanoutBus {
 
         if snapshot.is_empty() { return; }
 
-        for (stream_id, tx) in snapshot {
-            let wire = frame::delta_bytes(stream_id, 0, body_mp);
-            let _ = tx.send(OutboundMsg::Bytes(wire));
+        // Wrap body_mp in Arc once — all subscribers share the bytes; only the
+        // tiny per-subscriber header (stream_id) is assembled in the write task.
+        let shared: Arc<[u8]> = Arc::from(body_mp);
+
+        let mut slow_sessions: Vec<String> = Vec::new();
+
+        for (stream_id, session_id, tx, cancel) in snapshot {
+            if tx.try_send(OutboundMsg::ArcDelta { stream_id, body_mp: Arc::clone(&shared) }).is_err() {
+                warn!("Slow consumer {session_id} — cancelling session");
+                cancel.cancel();
+                slow_sessions.push(session_id);
+            }
+        }
+
+        // Remove slow subscribers from this key's subscription list.
+        if !slow_sessions.is_empty()
+            && let Some(mut subs) = self.subscriptions.get_mut(state_key) {
+                subs.retain(|s| !slow_sessions.contains(&s.session_id));
         }
     }
 

@@ -18,6 +18,30 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Close shuts down the server: stops the fanout bus, write pool, persistence
+// layer, and cluster backend. Existing connections are not forcibly closed;
+// call your http.Server.Shutdown first to drain them gracefully.
+func (srv *Server) Close() {
+	srv.Fanout.Close()
+	srv.Pool.Close()
+	if srv.persist != nil {
+		srv.persist.Close()
+	}
+	if srv.cluster != nil {
+		srv.cluster.Close()
+	}
+}
+
+// HealthHandler returns an http.Handler that responds to GET /health with a
+// JSON summary suitable for load-balancer health checks.
+func (srv *Server) HealthHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","connections":%d,"keys":%d}`,
+			srv.SessionCount(), srv.State.KeyCount())
+	})
+}
+
 const (
 	defaultPingInterval    = 30 * time.Second
 	defaultPongWait        = 60 * time.Second
@@ -30,9 +54,10 @@ const (
 )
 
 // AuthorizeKeyFn is called before every WATCH, RESUME, and state-mutating CALL.
+// action is "read" (WATCH/RESUME) or "write" (mutating CALL).
 // Return (true, _, _) to allow, or (false, code, message) to deny.
 // If nil, all key access is allowed.
-type AuthorizeKeyFn func(sess *Session, key string) (allowed bool, code int, message string)
+type AuthorizeKeyFn func(sess *Session, key, action string) (allowed bool, code int, message string)
 
 // jwtConfig holds either an HS256 secret or an RS256 public key.
 type jwtConfig struct {
@@ -46,18 +71,21 @@ func (c *jwtConfig) enabled() bool {
 
 // options holds all configurable Server parameters.
 type options struct {
-	checkOrigin      func(*http.Request) bool
-	jwt              *jwtConfig
-	requireAuth      bool
-	authorizeKey     AuthorizeKeyFn
-	maxSessions      int
-	rateLimit        int
-	maxWatches       int
-	backpressure     int
-	pingInterval     time.Duration
-	pongWait         time.Duration
-	writeWait        time.Duration
-	maxFrameBytes    int64
+	checkOrigin   func(*http.Request) bool
+	jwt           *jwtConfig
+	requireAuth   bool
+	authorizeKey  AuthorizeKeyFn
+	collector     Collector
+	cluster       ClusterBackend
+	persistDir    string
+	maxSessions   int
+	rateLimit     int
+	maxWatches    int
+	backpressure  int
+	pingInterval  time.Duration
+	pongWait      time.Duration
+	writeWait     time.Duration
+	maxFrameBytes int64
 }
 
 // ServerOption configures a Server.
@@ -136,6 +164,47 @@ func WithAuthorizeKey(fn AuthorizeKeyFn) ServerOption {
 	return func(o *options) { o.authorizeKey = fn }
 }
 
+// WithCollector attaches an observability collector (Prometheus, StatsD, etc.).
+// Passing nil installs a no-op collector (safe, zero overhead).
+func WithCollector(c Collector) ServerOption {
+	return func(o *options) { o.collector = c }
+}
+
+// WithCluster attaches a ClusterBackend for horizontal scaling.
+// At startup the server loads all state from the cluster and subscribes to
+// cross-node delta messages.
+func WithCluster(b ClusterBackend) ServerOption {
+	return func(o *options) { o.cluster = b }
+}
+
+// WithACLFile loads an ACL JSON rule file and wires it into the authorization
+// hook. If the file cannot be loaded, NewServer logs the error and continues
+// without ACL (all access allowed).
+//
+// The ACL file must be a JSON array of rule objects. See ACL for details.
+func WithACLFile(path string) ServerOption {
+	return func(o *options) {
+		acl, err := loadACL(path)
+		if err != nil {
+			log.Printf("sodp: WithACLFile: %v", err)
+			return
+		}
+		o.authorizeKey = func(sess *Session, key, action string) (bool, int, string) {
+			if acl.Authorize(sess, key, action) {
+				return true, 0, ""
+			}
+			return false, 403, "access denied"
+		}
+	}
+}
+
+// WithPersistenceDir enables WAL-based persistence. The server writes every
+// mutation to dir/sodp.wal and periodically compacts to dir/sodp.snap.
+// At startup the server replays the WAL to restore prior state.
+func WithPersistenceDir(dir string) ServerOption {
+	return func(o *options) { o.persistDir = dir }
+}
+
 // WithMaxSessions sets the hard connection limit. Default: 4096.
 func WithMaxSessions(n int) ServerOption {
 	return func(o *options) { o.maxSessions = n }
@@ -165,6 +234,7 @@ func WithBackpressureLimit(n int) ServerOption {
 type Server struct {
 	State  *StateStore
 	Fanout *FanoutBus
+	Pool   *WritePool
 
 	mu           sync.RWMutex
 	sessions     map[string]*Session
@@ -173,6 +243,10 @@ type Server struct {
 	serverID string
 	opts     options
 	upgrader websocket.Upgrader
+
+	coll    Collector
+	cluster ClusterBackend
+	persist *Persist
 }
 
 // NewServer creates a new SODP server instance with the provided options.
@@ -193,16 +267,57 @@ func NewServer(optFns ...ServerOption) *Server {
 		fn(&o)
 	}
 
+	coll := o.collector
+	if coll == nil {
+		coll = noopCollector{}
+	}
+
 	srv := &Server{
 		State:    NewStateStore(),
-		Fanout:   NewFanoutBus(),
 		sessions: make(map[string]*Session),
 		serverID: uuid.New().String()[:8],
 		opts:     o,
+		coll:     coll,
 	}
+	srv.Fanout = NewFanoutBus(coll)
+	srv.Pool = NewWritePool(o.writeWait, coll)
 	srv.upgrader = websocket.Upgrader{
 		CheckOrigin: o.checkOrigin,
 	}
+
+	// Cluster setup: load shared state, then subscribe to cross-node deltas.
+	if o.cluster != nil {
+		srv.cluster = o.cluster
+		entries, err := o.cluster.LoadAll()
+		if err != nil {
+			log.Printf("sodp: cluster LoadAll: %v", err)
+		} else {
+			for _, e := range entries {
+				srv.State.LoadEntry(e.Key, e.Version, e.Value)
+			}
+		}
+		if err := o.cluster.Subscribe(func(delta DeltaEntry) {
+			if srv.State.ApplyClusterDelta(delta) {
+				srv.Fanout.Broadcast(delta, o.cluster.NodeID())
+			}
+		}); err != nil {
+			log.Printf("sodp: cluster Subscribe: %v", err)
+		}
+	}
+
+	// Persistence setup: replay WAL on top of cluster state.
+	if o.persistDir != "" {
+		p, err := openPersist(o.persistDir)
+		if err != nil {
+			log.Printf("sodp: persist open: %v", err)
+		} else {
+			if err := p.LoadAll(srv.State); err != nil {
+				log.Printf("sodp: persist LoadAll: %v", err)
+			}
+			srv.persist = p
+		}
+	}
+
 	return srv
 }
 
@@ -226,12 +341,14 @@ func (srv *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	sess := NewSession(uuid.New().String())
 	sess.rateLimit = srv.opts.rateLimit
 	sess.maxWatches = srv.opts.maxWatches
-	sess.Send = make(chan []byte, srv.opts.backpressure)
+	sess.Send = make(chan outMsg, srv.opts.backpressure)
+	sess.Conn = conn
 
 	srv.mu.Lock()
 	srv.sessions[sess.ID] = sess
 	srv.mu.Unlock()
 	srv.sessionCount.Add(1)
+	srv.coll.SessionOpened()
 
 	conn.SetReadDeadline(time.Now().Add(srv.opts.pongWait))
 	conn.SetPongHandler(func(string) error {
@@ -267,7 +384,7 @@ func (srv *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		conn.WriteMessage(websocket.BinaryMessage, data)
 	}
 
-	go srv.writePump(conn, sess)
+	go srv.pingPump(conn, sess)
 	srv.readPump(conn, sess)
 
 	sess.Close()
@@ -276,36 +393,30 @@ func (srv *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	delete(srv.sessions, sess.ID)
 	srv.mu.Unlock()
 	srv.sessionCount.Add(-1)
+	srv.coll.SessionClosed()
 	conn.Close()
 }
 
-func (srv *Server) writePump(conn *websocket.Conn, sess *Session) {
+// pingPump sends WebSocket pings on a timer and a close frame on disconnect.
+// Writes are serialised with pool workers via sess.writeMu.
+func (srv *Server) pingPump(conn *websocket.Conn, sess *Session) {
 	ticker := time.NewTicker(srv.opts.pingInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
-		case msg, ok := <-sess.Send:
-			if !ok {
-				conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-			conn.SetWriteDeadline(time.Now().Add(srv.opts.writeWait))
-			if err := conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
-				return
-			}
-			// drain queued messages in the same write cycle
-			for n := len(sess.Send); n > 0; n-- {
-				if err := conn.WriteMessage(websocket.BinaryMessage, <-sess.Send); err != nil {
-					return
-				}
-			}
 		case <-ticker.C:
+			sess.writeMu.Lock()
 			conn.SetWriteDeadline(time.Now().Add(srv.opts.writeWait))
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			err := conn.WriteMessage(websocket.PingMessage, nil)
+			sess.writeMu.Unlock()
+			if err != nil {
+				sess.Close()
 				return
 			}
 		case <-sess.Done:
+			sess.writeMu.Lock()
+			conn.WriteMessage(websocket.CloseMessage, []byte{})
+			sess.writeMu.Unlock()
 			return
 		}
 	}
@@ -448,7 +559,7 @@ func (srv *Server) handleWatch(sess *Session, f Frame) {
 			srv.sendError(sess, f.StreamID, 400, "invalid key: "+key)
 			return
 		}
-		if err := srv.authorizeKey(sess, f.StreamID, key); err != nil {
+		if err := srv.authorizeKey(sess, f.StreamID, key, "read"); err != nil {
 			return
 		}
 
@@ -470,6 +581,7 @@ func (srv *Server) handleWatch(sess *Session, f Frame) {
 			SessionID: sess.ID,
 			StreamID:  streamID,
 			Send:      sess.Send,
+			Enqueue:   func() { srv.Pool.enqueue(sess) },
 		})
 
 		val, ver := srv.State.Get(key)
@@ -542,18 +654,21 @@ func (srv *Server) handleCall(sess *Session, f Frame) {
 		srv.sendError(sess, f.StreamID, 400, "invalid key")
 		return
 	}
-	if err := srv.authorizeKey(sess, f.StreamID, key); err != nil {
+	if err := srv.authorizeKey(sess, f.StreamID, key, "write"); err != nil {
 		return
 	}
 
 	var delta *DeltaEntry
+	var newVal any
 
 	switch body.Method {
 	case "state.set":
-		delta = srv.State.Apply(key, body.Args["value"])
+		newVal = body.Args["value"]
+		delta = srv.State.Apply(key, newVal)
 	case "state.patch":
 		current, _ := srv.State.Get(key)
-		delta = srv.State.Apply(key, mergeValues(current, body.Args["patch"]))
+		newVal = mergeValues(current, body.Args["patch"])
+		delta = srv.State.Apply(key, newVal)
 	case "state.set_in":
 		path, _ := body.Args["path"].(string)
 		if path == "" {
@@ -561,7 +676,8 @@ func (srv *Server) handleCall(sess *Session, f Frame) {
 			return
 		}
 		current, _ := srv.State.Get(key)
-		delta = srv.State.Apply(key, setIn(current, path, body.Args["value"]))
+		newVal = setIn(current, path, body.Args["value"])
+		delta = srv.State.Apply(key, newVal)
 	case "state.delete":
 		delta = srv.State.Delete(key)
 	case "state.append":
@@ -572,6 +688,9 @@ func (srv *Server) handleCall(sess *Session, f Frame) {
 			maxLen = int(ml)
 		}
 		delta = srv.State.Append(key, body.Args["value"], maxLen)
+		if delta != nil {
+			newVal, _ = srv.State.Get(key) // slight race acceptable for persistence
+		}
 	default:
 		srv.sendError(sess, f.StreamID, 400, "unknown method: "+body.Method)
 		return
@@ -593,8 +712,32 @@ func (srv *Server) handleCall(sess *Session, f Frame) {
 	})
 
 	if delta != nil {
+		srv.coll.MutationApplied(key)
 		srv.sendDeltaDirect(sess, f.StreamID, delta)
 		srv.Fanout.Broadcast(*delta, sess.ID)
+		srv.syncMutation(key, delta, newVal, body.Method == "state.delete")
+	}
+}
+
+// syncMutation propagates a mutation to the cluster backend and persistence WAL.
+func (srv *Server) syncMutation(key string, delta *DeltaEntry, newVal any, isDelete bool) {
+	if srv.cluster != nil {
+		if isDelete {
+			srv.cluster.SyncDelete(key)
+		} else {
+			srv.cluster.SyncState(key, delta.Version, newVal)
+			srv.cluster.PublishDelta(*delta)
+		}
+	}
+	if srv.persist != nil {
+		if isDelete {
+			srv.persist.AppendDelete(key, delta.Version)
+		} else {
+			srv.persist.Append(key, delta.Version, newVal)
+			if srv.persist.NeedsCompaction() {
+				go srv.persist.Compact(srv.State)
+			}
+		}
 	}
 }
 
@@ -608,7 +751,7 @@ func (srv *Server) handleResume(sess *Session, f Frame) {
 		srv.sendError(sess, f.StreamID, 400, "invalid key")
 		return
 	}
-	if err := srv.authorizeKey(sess, f.StreamID, body.Key); err != nil {
+	if err := srv.authorizeKey(sess, f.StreamID, body.Key, "read"); err != nil {
 		return
 	}
 
@@ -631,6 +774,7 @@ func (srv *Server) handleResume(sess *Session, f Frame) {
 		SessionID: sess.ID,
 		StreamID:  streamID,
 		Send:      sess.Send,
+		Enqueue:   func() { srv.Pool.enqueue(sess) },
 	})
 
 	for _, d := range deltas {
@@ -643,10 +787,7 @@ func (srv *Server) handleResume(sess *Session, f Frame) {
 		if err != nil {
 			continue
 		}
-		select {
-		case sess.Send <- frame:
-		default:
-		}
+		srv.Pool.Send(sess, outMsg{raw: frame})
 	}
 }
 
@@ -666,10 +807,7 @@ func (srv *Server) sendDeltaDirect(sess *Session, callStreamID uint32, delta *De
 	if err != nil {
 		return
 	}
-	select {
-	case sess.Send <- frame:
-	default:
-	}
+	srv.Pool.Send(sess, outMsg{raw: frame})
 }
 
 // Mutate applies a value change from server-side code (e.g., a background
@@ -677,7 +815,9 @@ func (srv *Server) sendDeltaDirect(sess *Session, callStreamID uint32, delta *De
 func (srv *Server) Mutate(key string, value any) {
 	delta := srv.State.Apply(key, value)
 	if delta != nil {
+		srv.coll.MutationApplied(key)
 		srv.Fanout.Broadcast(*delta, "")
+		srv.syncMutation(key, delta, value, false)
 	}
 }
 
@@ -686,7 +826,11 @@ func (srv *Server) Mutate(key string, value any) {
 func (srv *Server) MutateAppend(key string, element any, maxLen int) {
 	delta := srv.State.Append(key, element, maxLen)
 	if delta != nil {
+		srv.coll.MutationApplied(key)
 		srv.Fanout.Broadcast(*delta, "")
+		if newVal, _ := srv.State.Get(key); newVal != nil {
+			srv.syncMutation(key, delta, newVal, false)
+		}
 	}
 }
 
@@ -694,7 +838,9 @@ func (srv *Server) MutateAppend(key string, element any, maxLen int) {
 func (srv *Server) MutateDelete(key string) {
 	delta := srv.State.Delete(key)
 	if delta != nil {
+		srv.coll.MutationApplied(key)
 		srv.Fanout.Broadcast(*delta, "")
+		srv.syncMutation(key, delta, nil, true)
 	}
 }
 
@@ -705,11 +851,11 @@ func (srv *Server) SessionCount() int {
 
 // --- security helpers ---
 
-func (srv *Server) authorizeKey(sess *Session, streamID uint32, key string) error {
+func (srv *Server) authorizeKey(sess *Session, streamID uint32, key, action string) error {
 	if srv.opts.authorizeKey == nil {
 		return nil
 	}
-	allowed, code, msg := srv.opts.authorizeKey(sess, key)
+	allowed, code, msg := srv.opts.authorizeKey(sess, key, action)
 	if !allowed {
 		srv.sendError(sess, streamID, code, msg)
 		return fmt.Errorf("denied")
@@ -742,10 +888,7 @@ func (srv *Server) sendFrame(sess *Session, f Frame) {
 	if err != nil {
 		return
 	}
-	select {
-	case sess.Send <- data:
-	default:
-	}
+	srv.Pool.Send(sess, outMsg{raw: data})
 }
 
 func (srv *Server) sendError(sess *Session, streamID uint32, code int, msg string) {

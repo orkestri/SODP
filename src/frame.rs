@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use serde_json::Value;
 
 /// Outbound message on the per-connection write channel.
@@ -5,9 +6,12 @@ use serde_json::Value;
 /// `Frame` variants are encoded lazily in the write task (control messages).
 /// `Bytes` variants carry pre-encoded wire bytes (broadcast DELTAs encoded once,
 /// shared across all subscribers to avoid N redundant msgpack encodes).
+/// `ArcDelta` shares the pre-encoded body across all subscribers — only the
+/// small per-subscriber header (stream_id) is assembled at write time.
 pub enum OutboundMsg {
     Frame(Frame),
     Bytes(Vec<u8>),
+    ArcDelta { stream_id: u32, body_mp: Arc<[u8]> },
 }
 
 /// Build raw wire bytes for a DELTA frame, reusing a pre-encoded `body_mp`.
@@ -94,12 +98,18 @@ impl Frame {
 // --- Frame constructors ---
 
 /// `auth`: whether the server requires a JWT AUTH handshake before accepting frames.
-pub fn hello(auth: bool) -> Frame {
+/// `capabilities`: server capabilities advertised to clients.
+pub fn hello(auth: bool, capabilities: Value) -> Frame {
     Frame {
         frame_type: types::HELLO,
         stream_id:  0,
         seq:        0,
-        body: serde_json::json!({ "version": "0.1", "server": "SODP-RS", "auth": auth }),
+        body: serde_json::json!({
+            "version": "0.1",
+            "server": "SODP-RS",
+            "auth": auth,
+            "capabilities": capabilities,
+        }),
     }
 }
 
@@ -114,17 +124,21 @@ pub fn auth_ok(sub: &str) -> Frame {
     }
 }
 
-pub fn state_init(stream_id: u32, seq: u64, state_key: &str, version: u64, value: Value, initialized: bool) -> Frame {
+pub fn state_init(stream_id: u32, seq: u64, state_key: &str, version: u64, value: Value, initialized: bool, params: Option<Value>) -> Frame {
+    let mut body = serde_json::json!({
+        "state":       state_key,
+        "version":     version,
+        "value":       value,
+        "initialized": initialized,
+    });
+    if let Some(p) = params {
+        body["params"] = p;
+    }
     Frame {
         frame_type: types::STATE_INIT,
         stream_id,
         seq,
-        body: serde_json::json!({
-            "state":       state_key,
-            "version":     version,
-            "value":       value,
-            "initialized": initialized,
-        }),
+        body,
     }
 }
 

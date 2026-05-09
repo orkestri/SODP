@@ -10,6 +10,8 @@ use serde_json::Value;
 pub struct WatchEntry {
     pub state_key: String,
     pub last_seq:  u64,
+    /// Opaque params attached to this subscription (echoed in STATE_INIT).
+    pub params:    Option<Value>,
 }
 
 // ── Presence entry ────────────────────────────────────────────────────────────
@@ -112,8 +114,8 @@ impl Session {
         id
     }
 
-    pub fn add_watch(&mut self, stream_id: u32, state_key: String) {
-        self.watches.insert(stream_id, WatchEntry { state_key, last_seq: 0 });
+    pub fn add_watch(&mut self, stream_id: u32, state_key: String, params: Option<Value>) {
+        self.watches.insert(stream_id, WatchEntry { state_key, last_seq: 0, params });
     }
 
     pub fn remove_watch(&mut self, stream_id: u32) -> Option<WatchEntry> {

@@ -2,11 +2,16 @@ package sodp
 
 import (
 	"sync"
+	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// appendMsgpackUint appends the minimal msgpack encoding of a uint64 to b.
+const fanoutIdleTimeout = 5 * time.Minute
+
+// appendMsgpackUint appends the minimal-width msgpack encoding of v to b.
+// Used by Broadcast and writePump to hand-build DELTA frame headers without
+// calling msgpack.Marshal for the outer 4-element array.
 func appendMsgpackUint(b []byte, v uint64) []byte {
 	switch {
 	case v <= 0x7f:
@@ -24,38 +29,86 @@ func appendMsgpackUint(b []byte, v uint64) []byte {
 	}
 }
 
-// Subscriber represents one active WATCH subscription from a session.
+// outMsg is the message type for a session's Send channel.
+//
+// For RESULT, STATE_INIT, ERROR, HEARTBEAT, AUTH_OK frames: raw is set to the
+// pre-encoded msgpack bytes.
+//
+// For DELTA fanout frames: raw is nil; streamID and tail are set. The
+// writePump assembles the final frame bytes, distributing that O(1) work
+// across N write goroutines instead of doing it once sequentially in the
+// fanout goroutine.
+type outMsg struct {
+	raw      []byte // non-nil: pre-encoded frame
+	streamID uint32 // fanout only: subscriber's WATCH stream_id
+	tail     []byte // fanout only: [seq_bytes | body_bytes], shared across all subscribers
+}
+
+// fanoutJob is enqueued by Broadcast and consumed by the per-key fanout goroutine.
+type fanoutJob struct {
+	delta           DeltaEntry
+	senderSessionID string
+}
+
+// Subscriber represents one active WATCH subscription.
 type Subscriber struct {
 	SessionID string
 	StreamID  uint32
-	Send      chan<- []byte // pre-encoded frame bytes; must be buffered
+	Send      chan<- outMsg
+	Enqueue   func() // schedules the session for writing; may be nil in tests
 }
 
-// FanoutBus manages per-key subscriber lists and broadcasts pre-encoded delta
-// frames. The delta body is encoded once per mutation; per-subscriber cost is
-// only the 4-element frame envelope with the subscriber's stream_id.
+// FanoutBus manages per-key subscriber lists and fan-out delivery.
+//
+// Each state key gets its own goroutine that runs asynchronously, so
+// Broadcast returns immediately and never blocks the calling readPump.
+// The per-subscriber frame (stream_id prefix + shared tail) is assembled
+// inside the writePump goroutine, distributing that work across N goroutines.
+// Idle per-key goroutines reap themselves after fanoutIdleTimeout.
 type FanoutBus struct {
-	mu   sync.RWMutex
-	subs map[string][]Subscriber
+	mu     sync.RWMutex
+	subs   map[string][]Subscriber
+	keyChs map[string]chan fanoutJob // one buffered channel + goroutine per key
+	done   chan struct{}             // closed by Close(); signals all workers to stop
+	once   sync.Once
+	coll   Collector
 }
 
 // NewFanoutBus creates an empty fanout bus.
-func NewFanoutBus() *FanoutBus {
-	return &FanoutBus{subs: make(map[string][]Subscriber)}
+func NewFanoutBus(coll Collector) *FanoutBus {
+	if coll == nil {
+		coll = noopCollector{}
+	}
+	return &FanoutBus{
+		subs:   make(map[string][]Subscriber),
+		keyChs: make(map[string]chan fanoutJob),
+		done:   make(chan struct{}),
+		coll:   coll,
+	}
 }
 
-// Subscribe adds a subscriber for a state key.
+// Close stops all fanout goroutines. Call this when the server shuts down.
+func (fb *FanoutBus) Close() {
+	fb.once.Do(func() { close(fb.done) })
+}
+
+// Subscribe adds a subscriber for a state key, starting a fanout goroutine
+// for the key if one does not exist yet.
 func (fb *FanoutBus) Subscribe(key string, sub Subscriber) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 	fb.subs[key] = append(fb.subs[key], sub)
+	if _, ok := fb.keyChs[key]; !ok {
+		ch := make(chan fanoutJob, 256)
+		fb.keyChs[key] = ch
+		go fb.fanoutWorker(key, ch)
+	}
 }
 
 // Unsubscribe removes a subscriber by session and stream ID.
 func (fb *FanoutBus) Unsubscribe(key, sessionID string, streamID uint32) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
-
 	subs := fb.subs[key]
 	for i, s := range subs {
 		if s.SessionID == sessionID && s.StreamID == streamID {
@@ -70,57 +123,39 @@ func (fb *FanoutBus) Unsubscribe(key, sessionID string, streamID uint32) {
 func (fb *FanoutBus) RemoveSession(sessionID string) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
-
 	for key, subs := range fb.subs {
-		filtered := subs[:0]
+		out := subs[:0]
 		for _, s := range subs {
 			if s.SessionID != sessionID {
-				filtered = append(filtered, s)
+				out = append(out, s)
 			}
 		}
-		if len(filtered) == 0 {
+		if len(out) == 0 {
 			delete(fb.subs, key)
 		} else {
-			fb.subs[key] = filtered
+			fb.subs[key] = out
 		}
 	}
 }
 
-// Broadcast encodes the delta body once, then hand-builds a per-subscriber
-// DELTA frame by prepending only the 2–5 byte stream_id field.
-// No msgpack.Marshal is called inside the loop — only a slice allocation
-// and two copies per subscriber.
-// The sender session is skipped; slow subscribers are dropped (non-blocking send).
+// Broadcast enqueues a delta for async fan-out to all subscribers of delta.Key
+// except the sender. It returns immediately — the actual delivery happens in the
+// key's dedicated goroutine, so the readPump is never blocked by subscriber count.
+//
+// If the fanout queue is full (the fanout goroutine is behind), the delta is
+// dropped for that key. Clients that miss a delta will recover via RESUME.
 func (fb *FanoutBus) Broadcast(delta DeltaEntry, senderSessionID string) {
-	bodyBytes, err := msgpack.Marshal(delta)
-	if err != nil {
+	fb.mu.RLock()
+	ch := fb.keyChs[delta.Key]
+	fb.mu.RUnlock()
+	if ch == nil {
 		return
 	}
-
-	// Pre-build the constant tail: [seq_bytes | body_bytes].
-	// fixarray(4) + FrameDelta(0x04) are always 2 bytes; they're prepended inline.
-	tail := appendMsgpackUint(nil, delta.Version) // seq
-	tail = append(tail, bodyBytes...)
-
-	fb.mu.RLock()
-	subs := fb.subs[delta.Key]
-	snapshot := make([]Subscriber, len(subs))
-	copy(snapshot, subs)
-	fb.mu.RUnlock()
-
-	for _, sub := range snapshot {
-		if sub.SessionID == senderSessionID {
-			continue
-		}
-		// Build [0x94, 0x04, <streamID>, <tail>] without invoking msgpack.Marshal.
-		frame := make([]byte, 0, 2+5+len(tail)) // 5 = max stream_id encoding width
-		frame = append(frame, 0x94, byte(FrameDelta))
-		frame = appendMsgpackUint(frame, uint64(sub.StreamID))
-		frame = append(frame, tail...)
-		select {
-		case sub.Send <- frame:
-		default:
-		}
+	select {
+	case ch <- fanoutJob{delta: delta, senderSessionID: senderSessionID}:
+	case <-fb.done:
+	default: // queue full — watcher misses delta; RESUME recovers
+		fb.coll.DeltaDropped("fanout")
 	}
 }
 
@@ -129,4 +164,73 @@ func (fb *FanoutBus) SubscriberCount(key string) int {
 	fb.mu.RLock()
 	defer fb.mu.RUnlock()
 	return len(fb.subs[key])
+}
+
+// fanoutWorker is the per-key goroutine. It encodes the delta body once and
+// sends a shared tail reference to each subscriber's writePump channel.
+// After fanoutIdleTimeout of no activity it reaps itself from keyChs.
+func (fb *FanoutBus) fanoutWorker(key string, ch <-chan fanoutJob) {
+	timer := time.NewTimer(fanoutIdleTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case job := <-ch:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(fanoutIdleTimeout)
+			fb.deliver(job)
+		case <-timer.C:
+			// Idle — try to reap: acquire write lock and remove from keyChs.
+			fb.mu.Lock()
+			if len(ch) == 0 {
+				delete(fb.keyChs, key)
+				fb.mu.Unlock()
+				return
+			}
+			fb.mu.Unlock()
+			timer.Reset(fanoutIdleTimeout)
+		case <-fb.done:
+			return
+		}
+	}
+}
+
+// deliver encodes the delta body once, builds the shared tail, then sends an
+// outMsg to each subscriber's channel. The writePump goroutine for each
+// subscriber prepends its own stream_id bytes — O(1) work per subscriber,
+// done in parallel across N writePumps.
+func (fb *FanoutBus) deliver(job fanoutJob) {
+	bodyBytes, err := msgpack.Marshal(job.delta)
+	if err != nil {
+		return
+	}
+	// tail = [seq_bytes | body_bytes] — constant across all subscribers for this mutation
+	tail := appendMsgpackUint(nil, job.delta.Version)
+	tail = append(tail, bodyBytes...)
+
+	fb.mu.RLock()
+	subs := fb.subs[job.delta.Key]
+	snapshot := make([]Subscriber, len(subs))
+	copy(snapshot, subs)
+	fb.mu.RUnlock()
+
+	for _, sub := range snapshot {
+		if sub.SessionID == job.senderSessionID {
+			continue
+		}
+		// Send a pointer to the shared tail; no per-subscriber allocation here.
+		select {
+		case sub.Send <- outMsg{streamID: sub.StreamID, tail: tail}:
+			if sub.Enqueue != nil {
+				sub.Enqueue()
+			}
+			fb.coll.DeltaDelivered()
+		default: // slow subscriber — drop; RESUME recovers
+			fb.coll.DeltaDropped("session")
+		}
+	}
 }

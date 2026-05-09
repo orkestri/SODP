@@ -6,4 +6,4 @@ export { useSodpState, useSodpStates, useSodpRef } from "./hooks.js";
 // one import path. Includes the `source` field on WatchMeta (cache | init | delta)
 // and the shared `applyOps` reducer for test authors.
 export { SodpClient, StateRef, applyOps } from "@sodp/client";
-export type { WatchMeta, WatchCallback, DeltaOp, SodpClientOptions, CallResult } from "@sodp/client";
+export type { WatchMeta, WatchCallback, DeltaOp, SodpClientOptions, CallResult, SodpError } from "@sodp/client";

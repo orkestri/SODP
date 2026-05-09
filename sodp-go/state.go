@@ -251,6 +251,70 @@ func (s *StateStore) DeltasSince(key string, sinceVersion uint64) []DeltaEntry {
 	return result
 }
 
+// Entries returns all key/version/value triples for compaction snapshots.
+func (s *StateStore) Entries() []StateEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]StateEntry, 0, len(s.entries))
+	for k, e := range s.entries {
+		out = append(out, StateEntry{Key: k, Version: e.Version, Value: e.Value})
+	}
+	return out
+}
+
+// LoadEntry stores an entry from a persistence replay or cluster sync.
+// It skips the diff and delta log; the version must be newer than what is
+// already stored, otherwise the call is a no-op.
+func (s *StateStore) LoadEntry(key string, version uint64, value any) {
+	s.mu.Lock()
+	if cur := s.entries[key]; version > cur.Version {
+		s.entries[key] = stateEntry{Value: value, Version: version}
+	}
+	s.mu.Unlock()
+	// Advance global counter so the next Apply produces a higher version.
+	for {
+		cur := s.global.Load()
+		if version <= cur || s.global.CompareAndSwap(cur, version) {
+			break
+		}
+	}
+}
+
+// LoadDelete removes a key loaded from the persistence WAL.
+// Only takes effect if version is at least as recent as the stored version.
+func (s *StateStore) LoadDelete(key string, version uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cur, ok := s.entries[key]; ok && version >= cur.Version {
+		delete(s.entries, key)
+		delete(s.deltas, key)
+	}
+}
+
+// ApplyClusterDelta applies a delta received from another cluster node.
+// It patches local in-memory state and appends to the delta log so that
+// local watchers can RESUME. Returns false if the entry is stale.
+func (s *StateStore) ApplyClusterDelta(entry DeltaEntry) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cur := s.entries[entry.Key]
+	if entry.Version <= cur.Version {
+		return false // stale — already at a newer version
+	}
+	newValue := ApplyOps(cur.Value, entry.Ops)
+	s.entries[entry.Key] = stateEntry{Value: newValue, Version: entry.Version}
+	s.appendDelta(entry.Key, entry)
+
+	for {
+		c := s.global.Load()
+		if entry.Version <= c || s.global.CompareAndSwap(c, entry.Version) {
+			break
+		}
+	}
+	return true
+}
+
 func (s *StateStore) appendDelta(key string, entry DeltaEntry) {
 	ring := s.deltas[key]
 	if ring == nil {
