@@ -2,25 +2,22 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use serde::Serialize;
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::delta::DeltaOp;
 use crate::frame::OutboundMsg;
+use crate::write_pool::WriteHandle;
 
 /// Default capacity for the per-session bounded channel.
 /// When the channel is full, the subscriber is considered slow and evicted.
 pub const DEFAULT_BACKPRESSURE_LIMIT: usize = 1024;
 
-/// One active WATCH subscription: a channel back to the owning connection task.
-#[derive(Debug, Clone)]
+/// One active WATCH subscription: a write handle back to the owning session.
+#[derive(Clone)]
 pub struct Subscriber {
     pub session_id: String,
     pub stream_id: u32,
-    pub tx: mpsc::Sender<OutboundMsg>,
-    /// Cancelled when the subscriber is too slow (channel full).
-    pub cancel: CancellationToken,
+    pub write: Arc<WriteHandle>,
 }
 
 /// Registry of all active subscriptions, keyed by state name.
@@ -73,12 +70,11 @@ impl FanoutBus {
     /// Optimised for low P99:
     ///  1. Snapshot subscriber handles while holding the shard lock for the
     ///     shortest possible window (just pointer copies, no allocation).
-    ///  2. Body is already encoded — per-subscriber cost is one small Vec
-    ///     alloc + header write.
+    ///  2. Body is already encoded — per-subscriber cost is one Arc clone.
     ///
     /// `exclude_session`: if `Some(id)`, skip the subscriber whose
     /// `session_id == id`.  Use this when the triggering session will receive
-    /// its own DELTA via a direct `ws_tx.send()` call.
+    /// its own DELTA via a direct write.
     ///
     /// Slow subscribers (full channel) are cancelled and removed inline.
     pub fn broadcast_encoded(
@@ -87,12 +83,12 @@ impl FanoutBus {
         body_mp: &[u8],
         exclude_session: Option<&str>,
     ) {
-        let snapshot: Vec<(u32, String, mpsc::Sender<OutboundMsg>, CancellationToken)> =
+        let snapshot: Vec<(u32, String, Arc<WriteHandle>)> =
             match self.subscriptions.get(state_key) {
                 Some(subs) => subs
                     .iter()
                     .filter(|s| exclude_session.is_none_or(|ex| s.session_id != ex))
-                    .map(|s| (s.stream_id, s.session_id.clone(), s.tx.clone(), s.cancel.clone()))
+                    .map(|s| (s.stream_id, s.session_id.clone(), Arc::clone(&s.write)))
                     .collect(),
                 None => return,
             };
@@ -100,16 +96,14 @@ impl FanoutBus {
 
         if snapshot.is_empty() { return; }
 
-        // Wrap body_mp in Arc once — all subscribers share the bytes; only the
-        // tiny per-subscriber header (stream_id) is assembled in the write task.
+        // Wrap body_mp in Arc once — all subscribers share the bytes.
         let shared: Arc<[u8]> = Arc::from(body_mp);
 
         let mut slow_sessions: Vec<String> = Vec::new();
 
-        for (stream_id, session_id, tx, cancel) in snapshot {
-            if tx.try_send(OutboundMsg::ArcDelta { stream_id, body_mp: Arc::clone(&shared) }).is_err() {
+        for (stream_id, session_id, write) in snapshot {
+            if !write.send(OutboundMsg::ArcDelta { stream_id, body_mp: Arc::clone(&shared) }) {
                 warn!("Slow consumer {session_id} — cancelling session");
-                cancel.cancel();
                 slow_sessions.push(session_id);
             }
         }
