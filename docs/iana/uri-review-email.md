@@ -37,8 +37,8 @@ third-party implementation in Go.
     State-Oriented Data Protocol (SODP) — a binary protocol for continuous
     state synchronization over persistent bidirectional connections. Uses
     MessagePack-encoded frames over WebSocket (RFC 6455).
-  Contact:  Orkestri <hello@orkestri.io>
-  Change controller:  Orkestri <hello@orkestri.io>
+  Contact:  Orkestri <hello@orkestri.site>
+  Change controller:  Orkestri <hello@orkestri.site>
   References:
     https://github.com/orkestri/SODP/blob/master/SPECIFICATION.md
 
@@ -50,8 +50,8 @@ third-party implementation in Go.
     State-Oriented Data Protocol (SODP) over TLS — the TLS-secured
     variant of SODP. Requires TLS 1.2 or later. Semantically identical
     to "sodp" but encrypted. Analogous to ws/wss (RFC 6455).
-  Contact:  Orkestri <hello@orkestri.io>
-  Change controller:  Orkestri <hello@orkestri.io>
+  Contact:  Orkestri <hello@orkestri.site>
+  Change controller:  Orkestri <hello@orkestri.site>
   References:
     https://github.com/orkestri/SODP/blob/master/SPECIFICATION.md
 
@@ -80,6 +80,6 @@ The specification and all implementations are publicly available:
 We welcome any feedback from the review list.
 
 Best regards,
-[Your name]
+Abel Eduardo Mondlane
 Orkestri
-hello@orkestri.io
+hello@orkestri.site

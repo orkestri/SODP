@@ -20,11 +20,11 @@ frames over WebSocket (RFC 6455) as its reference transport binding.
 
 **Contact:**
 Orkestri
-hello@orkestri.io
+hello@orkestri.site
 
 **Change controller:**
 Orkestri
-hello@orkestri.io
+hello@orkestri.site
 
 **References:**
 SODP Protocol Specification v1.0
@@ -47,11 +47,11 @@ Analogous to the relationship between `ws` and `wss` (RFC 6455), or
 
 **Contact:**
 Orkestri
-hello@orkestri.io
+hello@orkestri.site
 
 **Change controller:**
 Orkestri
-hello@orkestri.io
+hello@orkestri.site
 
 **References:**
 SODP Protocol Specification v1.0
