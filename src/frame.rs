@@ -12,6 +12,8 @@ pub enum OutboundMsg {
     Frame(Frame),
     Bytes(Vec<u8>),
     ArcDelta { stream_id: u32, body_mp: Arc<[u8]> },
+    Ping,
+    Pong(Vec<u8>),
 }
 
 /// Build raw wire bytes for a DELTA frame, reusing a pre-encoded `body_mp`.
