@@ -49,7 +49,7 @@
     <dependency>
       <groupId>org.msgpack</groupId>
       <artifactId>msgpack-core</artifactId>
-      <version>0.9.8</version>
+      <version>0.9.11</version>
     </dependency>
 
     <!-- Jackson — JSON value tree + type conversion (POJO ↔ JsonNode) -->

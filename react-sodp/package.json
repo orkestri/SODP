@@ -36,6 +36,14 @@
     "@sodp/client": "^0.2.2",
     "react": ">=17"
   },
+  "overrides": {
+    "handlebars": "^4.7.9",
+    "picomatch": "^2.3.2",
+    "jest-util": {
+      "picomatch": "^4.0.4"
+    },
+    "brace-expansion": "^2.1.0"
+  },
   "devDependencies": {
     "@sodp/client": "file:../client-ts",
     "@testing-library/jest-dom": "^6.9.1",
