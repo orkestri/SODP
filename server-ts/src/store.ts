@@ -23,6 +23,10 @@ export interface Subscriber {
   (delta: DeltaLogEntry, key: string): void
 }
 
+export interface GlobalSubscriber {
+  (key: string, delta: DeltaLogEntry, value: unknown): void
+}
+
 interface Entry {
   value: unknown
   version: number
@@ -34,9 +38,17 @@ interface Entry {
 export class StateStore {
   private readonly keys = new Map<string, Entry>()
   private readonly capacity: number
+  private readonly globalSubs = new Set<GlobalSubscriber>()
 
   constructor(capacity = DEFAULT_LOG_CAPACITY) {
     this.capacity = capacity
+  }
+
+  // Subscribe to mutations on ALL keys. Used by cluster sync and persistence.
+  // Returns an unsubscribe function.
+  addGlobalSubscriber(fn: GlobalSubscriber): () => void {
+    this.globalSubs.add(fn)
+    return () => this.globalSubs.delete(fn)
   }
 
   private getOrInit(key: string): Entry {
@@ -75,7 +87,39 @@ export class StateStore {
     for (const sub of e.subscribers) {
       try { sub(entry, key) } catch { /* subscriber bugs must not kill others */ }
     }
+    for (const sub of this.globalSubs) {
+      try { sub(key, entry, e.value) } catch { /* ignore */ }
+    }
     return entry
+  }
+
+  // Apply a remote delta (received from another cluster node) without triggering
+  // global subscribers — avoids re-broadcasting back to Redis.
+  publishRemote(key: string, ops: DeltaOp[], version: number): void {
+    const e = this.getOrInit(key)
+    e.value = applyOps(e.value, ops)
+    e.version = version
+    e.initialized = true
+    const entry: DeltaLogEntry = { version, ops, at: Date.now() }
+    e.log.push(entry)
+    if (e.log.length > this.capacity) e.log.shift()
+    for (const sub of e.subscribers) {
+      try { sub(entry, key) } catch { /* ignore */ }
+    }
+    // globalSubs NOT called — prevents Redis re-broadcast loop.
+  }
+
+  // Load entries from an external source (Redis bootstrap or file restore).
+  // Hydrates without triggering subscribers or global hooks.
+  loadEntries(entries: Array<{ key: string; version: number; value: unknown }>): void {
+    for (const { key, version, value } of entries) {
+      const e = this.getOrInit(key)
+      if (version > e.version) {
+        e.value = value
+        e.version = version
+        e.initialized = true
+      }
+    }
   }
 
   // Seed a key with a full value without broadcasting. Use when loading
@@ -103,6 +147,10 @@ export class StateStore {
     const e = this.getOrInit(key)
     e.subscribers.add(sub)
     return () => e.subscribers.delete(sub)
+  }
+
+  allKeys(): string[] {
+    return Array.from(this.keys.keys())
   }
 
   stats(): { keys: number; subscribers: number } {
