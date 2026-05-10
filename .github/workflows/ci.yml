@@ -74,18 +74,27 @@ jobs:
   typescript-react:
     name: TypeScript React hooks (build)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: react-sodp
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: react-sodp/package-lock.json
-      - run: npm ci
-      - run: npm run build
+          # Both lock files are needed: client-ts is a file: dep of react-sodp
+          cache-dependency-path: |
+            client-ts/package-lock.json
+            react-sodp/package-lock.json
+
+      # @sodp/client is a file: link — its dist/ is gitignored, so it must
+      # be built before react-sodp can resolve the module and its type declarations.
+      - name: Build @sodp/client
+        working-directory: client-ts
+        run: npm ci && npm run build
+
+      - name: Build @sodp/react
+        working-directory: react-sodp
+        run: npm ci && npm run build
 
   # ── Python client (sodp) ─────────────────────────────────────────────────────
   python:
