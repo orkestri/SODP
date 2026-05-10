@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master]
 
+# Shared helper — true when a PR touches the given path prefix.
+# On push to master every job always runs (no filter needed).
+# The [ci-all] title escape hatch forces all jobs on any PR.
+
 jobs:
   # ── Rust server ─────────────────────────────────────────────────────────────
   rust:
@@ -15,7 +19,9 @@ jobs:
       github.event_name == 'push' ||
       contains(github.event.pull_request.title, '[ci-all]') ||
       contains(toJson(github.event.pull_request.files.*.filename), 'src/') ||
-      contains(toJson(github.event.pull_request.files.*.filename), 'Cargo')
+      contains(toJson(github.event.pull_request.files.*.filename), 'Cargo') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'build.rs') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'sodp-middleware/')
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +41,13 @@ jobs:
   benchmark:
     name: Rust benchmarks (criterion)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: |
+      github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.title, '[ci-all]') ||
+        contains(toJson(github.event.pull_request.files.*.filename), 'src/') ||
+        contains(toJson(github.event.pull_request.files.*.filename), 'Cargo') ||
+        contains(toJson(github.event.pull_request.files.*.filename), 'benches/')
+      )
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +68,10 @@ jobs:
   typescript-client:
     name: TypeScript client (build · test)
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.title, '[ci-all]') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'client-ts/')
     defaults:
       run:
         working-directory: client-ts
@@ -74,6 +90,11 @@ jobs:
   typescript-react:
     name: TypeScript React hooks (build)
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.title, '[ci-all]') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'react-sodp/') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'client-ts/')
     steps:
       - uses: actions/checkout@v4
 
@@ -81,13 +102,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          # Both lock files are needed: client-ts is a file: dep of react-sodp
           cache-dependency-path: |
             client-ts/package-lock.json
             react-sodp/package-lock.json
 
-      # @sodp/client is a file: link — its dist/ is gitignored, so it must
-      # be built before react-sodp can resolve the module and its type declarations.
       - name: Build @sodp/client
         working-directory: client-ts
         run: npm ci && npm run build
@@ -100,6 +118,10 @@ jobs:
   python:
     name: Python client (install · test)
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.title, '[ci-all]') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'sodp-py/')
     defaults:
       run:
         working-directory: sodp-py
@@ -117,6 +139,10 @@ jobs:
   java:
     name: Java client (test)
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.title, '[ci-all]') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'sodp-java/')
     defaults:
       run:
         working-directory: sodp-java
@@ -133,6 +159,10 @@ jobs:
   go:
     name: Go server (vet · test)
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.title, '[ci-all]') ||
+      contains(toJson(github.event.pull_request.files.*.filename), 'sodp-go/')
     defaults:
       run:
         working-directory: sodp-go
