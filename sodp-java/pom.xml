@@ -7,7 +7,7 @@
 
   <groupId>site.orkestri</groupId>
   <artifactId>sodp-client</artifactId>
-  <version>0.2.1</version>
+  <version>0.2.2</version>
   <packaging>jar</packaging>
 
   <name>SODP Java Client</name>

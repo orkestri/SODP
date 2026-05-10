@@ -20,14 +20,14 @@ Instead of polling or request/response, SODP streams every change as a minimal d
 <dependency>
     <groupId>site.orkestri</groupId>
     <artifactId>sodp-client</artifactId>
-    <version>0.2.1</version>
+    <version>0.2.2</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'site.orkestri:sodp-client:0.2.1'
+implementation 'site.orkestri:sodp-client:0.2.2'
 ```
 
 ---
