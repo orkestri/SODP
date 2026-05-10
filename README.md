@@ -150,7 +150,7 @@ http.ListenAndServe(":7777", nil)
 | [`@sodp/client`](client-ts/) | `npm i @sodp/client` | TypeScript / JavaScript |
 | [`@sodp/react`](react-sodp/) | `npm i @sodp/react` | React hooks |
 | [`sodp-client`](sodp-py/) | `pip install sodp-client-client` | Python |
-| [`io.sodp:sodp-client`](sodp-java/) | see below | Java 17+ |
+| [`site.orkesri:sodp-client`](sodp-java/) | see below | Java 17+ |
 
 ### TypeScript / JavaScript
 
@@ -228,7 +228,7 @@ asyncio.run(main())
 ```xml
 <!-- Maven — GitHub Packages (github.com/orkestri/SODP) -->
 <dependency>
-  <groupId>io.sodp</groupId>
+  <groupId>site.orkesri</groupId>
   <artifactId>sodp-client</artifactId>
   <version>0.2.1</version>
 </dependency>
@@ -267,7 +267,7 @@ sodp-go/         Go server (library + sodp-server binary)
 client-ts/       @sodp/client  — TypeScript / JavaScript
 react-sodp/      @sodp/react   — React hooks
 sodp-py/         sodp           — Python
-sodp-java/       io.sodp:sodp-client — Java
+sodp-java/       site.orkesri:sodp-client — Java
 demo-collab/     Collaborative editor demo (presence, live cursors)
 sodp-middleware/ ACL + rate-limiter middleware crate
 docs/            Protocol spec, deployment guide, SVG diagrams

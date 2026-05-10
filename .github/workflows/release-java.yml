@@ -1,4 +1,4 @@
-name: Release — Java (GitHub Packages)
+name: Release — Java
 
 on:
   push:
@@ -6,12 +6,12 @@ on:
       - "java/v*"
 
 jobs:
-  publish:
-    name: Publish io.sodp:sodp-client to GitHub Packages
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    defaults:
+      run:
+        working-directory: sodp-java
 
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,29 @@ jobs:
           java-version: 17
           cache: maven
 
+      - run: mvn --no-transfer-progress test
+
+  publish:
+    name: Publish to Maven Central
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Import GPG key
+        run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+
       - name: Write Maven settings
         run: |
           mkdir -p ~/.m2
@@ -29,16 +52,38 @@ jobs:
           <settings>
             <servers>
               <server>
-                <id>github</id>
-                <username>${env.GITHUB_ACTOR}</username>
-                <password>${env.GITHUB_TOKEN}</password>
+                <id>central</id>
+                <username>${env.CENTRAL_USERNAME}</username>
+                <password>${env.CENTRAL_PASSWORD}</password>
               </server>
             </servers>
           </settings>
           EOF
 
-      - name: Deploy to GitHub Packages
+      - name: Deploy to Maven Central
         working-directory: sodp-java
-        run: mvn --no-transfer-progress deploy -DskipTests
+        run: mvn --no-transfer-progress --batch-mode deploy -P release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#java/}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --include-path "sodp-java/**" --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Java ${{ steps.version.outputs.version }}" \
+            --notes-file RELEASE_NOTES.md

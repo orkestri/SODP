@@ -1,6 +1,6 @@
 # sodp-client — Java
 
-[![Maven](https://img.shields.io/github/v/release/orkestri/SODP?label=maven)](https://github.com/orkestri/SODP/packages)
+[![Maven Central](https://img.shields.io/maven-central/v/site.orkesri/sodp-client)](https://central.sonatype.com/artifact/site.orkesri/sodp-client)
 [![Java](https://img.shields.io/badge/java-17%2B-blue)](https://adoptium.net/)
 [![license](https://img.shields.io/github/license/orkestri/SODP)](https://github.com/orkestri/SODP/blob/main/LICENSE)
 
@@ -18,59 +18,16 @@ Instead of polling or request/response, SODP streams every change as a minimal d
 
 ```xml
 <dependency>
-    <groupId>io.sodp</groupId>
+    <groupId>site.orkesri</groupId>
     <artifactId>sodp-client</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.1</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'io.sodp:sodp-client:0.1.0'
-```
-
-### GitHub Packages
-
-The package is hosted on GitHub Packages. Add the repository to your build file and authenticate with a GitHub token:
-
-**Maven** — `~/.m2/settings.xml`:
-
-```xml
-<settings>
-  <servers>
-    <server>
-      <id>github-sodp</id>
-      <username>YOUR_GITHUB_USERNAME</username>
-      <password>YOUR_GITHUB_TOKEN</password>  <!-- token needs read:packages scope -->
-    </server>
-  </servers>
-</settings>
-```
-
-`pom.xml`:
-
-```xml
-<repositories>
-  <repository>
-    <id>github-sodp</id>
-    <url>https://maven.pkg.github.com/orkestri/SODP</url>
-  </repository>
-</repositories>
-```
-
-**Gradle** — `build.gradle`:
-
-```groovy
-repositories {
-    maven {
-        url = uri("https://maven.pkg.github.com/orkestri/SODP")
-        credentials {
-            username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
-            password = project.findProperty("gpr.key")  ?: System.getenv("GITHUB_TOKEN")
-        }
-    }
-}
+implementation 'site.orkesri:sodp-client:0.2.1'
 ```
 
 ---
