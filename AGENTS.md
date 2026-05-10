@@ -278,13 +278,13 @@ asyncio.run(main())
 
 ---
 
-## Java — `io.sodp:sodp-client`
+## Java — `site.orkestri:sodp-client`
 
 ```xml
 <dependency>
-  <groupId>io.sodp</groupId>
+  <groupId>site.orkestri</groupId>
   <artifactId>sodp-client</artifactId>
-  <version>0.2.1</version>
+  <version>0.2.2</version>
 </dependency>
 ```
 
