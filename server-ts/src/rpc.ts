@@ -8,7 +8,8 @@ import type { StateStore } from './store'
 import type { SodpClaims } from './jwt'
 import type { SodpSession, CallResult } from './session'
 import type { AclRegistry } from './acl'
-import { diffShallow } from './jsonpointer'
+import type { SchemaRegistry } from './schema'
+import { diffShallow, applyOps } from './jsonpointer'
 
 export async function handleBuiltinCall(
   method: string,
@@ -17,14 +18,15 @@ export async function handleBuiltinCall(
   session: SodpSession,
   store: StateStore,
   acl: AclRegistry | null,
+  schema: SchemaRegistry | null,
 ): Promise<CallResult | null> {
   switch (method) {
-    case 'state.set':     return handleSet(args, claims, session, store, acl)
-    case 'state.patch':   return handlePatch(args, claims, session, store, acl)
-    case 'state.set_in':  return handleSetIn(args, claims, session, store, acl)
-    case 'state.delete':  return handleDelete(args, claims, session, store, acl)
+    case 'state.set':      return handleSet(args, claims, session, store, acl, schema)
+    case 'state.patch':    return handlePatch(args, claims, session, store, acl, schema)
+    case 'state.set_in':   return handleSetIn(args, claims, session, store, acl, schema)
+    case 'state.delete':   return handleDelete(args, claims, session, store, acl)
     case 'state.presence': return handlePresence(args, claims, session, store, acl)
-    default:              return null // unknown built-in — let the app's onCall handle it
+    default:               return null
   }
 }
 
@@ -39,10 +41,16 @@ async function handleSet(
   _session: SodpSession,
   store: StateStore,
   acl: AclRegistry | null,
+  schema: SchemaRegistry | null,
 ): Promise<CallResult> {
   const key = args['state']
   if (typeof key !== 'string') return err('missing state')
   if (!writeAllowed(key, claims, acl)) return err('access denied', 403)
+
+  if (schema) {
+    const schemaErr = schema.validate(key, args['value'])
+    if (schemaErr) return err(schemaErr, 422)
+  }
 
   const snap = store.snapshot(key)
   const ops = diffShallow(snap.value, args['value'])
@@ -60,6 +68,7 @@ async function handlePatch(
   _session: SodpSession,
   store: StateStore,
   acl: AclRegistry | null,
+  schema: SchemaRegistry | null,
 ): Promise<CallResult> {
   const key = args['state']
   if (typeof key !== 'string') return err('missing state')
@@ -74,6 +83,13 @@ async function handlePatch(
     path: `/${k.replace(/~/g, '~0').replace(/\//g, '~1')}`,
     value: v,
   }))
+
+  if (schema && ops.length > 0) {
+    const merged = applyOps(store.snapshot(key).value, ops)
+    const schemaErr = schema.validate(key, merged)
+    if (schemaErr) return err(schemaErr, 422)
+  }
+
   if (ops.length > 0) store.publish(key, ops)
   return { success: true, data: null }
 }
@@ -84,6 +100,7 @@ async function handleSetIn(
   _session: SodpSession,
   store: StateStore,
   acl: AclRegistry | null,
+  schema: SchemaRegistry | null,
 ): Promise<CallResult> {
   const key = args['state']
   if (typeof key !== 'string') return err('missing state')
@@ -92,7 +109,14 @@ async function handleSetIn(
   const path = args['path']
   if (typeof path !== 'string') return err('missing path')
 
-  store.publish(key, [{ op: 'UPDATE', path, value: args['value'] }])
+  const op = { op: 'UPDATE' as const, path, value: args['value'] }
+  if (schema) {
+    const newValue = applyOps(store.snapshot(key).value, [op])
+    const schemaErr = schema.validate(key, newValue)
+    if (schemaErr) return err(schemaErr, 422)
+  }
+
+  store.publish(key, [op])
   return { success: true, data: null }
 }
 
