@@ -1,0 +1,86 @@
+name: Release — Go
+
+on:
+  push:
+    tags:
+      - "go/v*"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sodp-go
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sodp-go/go.mod
+          cache-dependency-path: sodp-go/go.sum
+
+      - run: go test ./...
+
+  release:
+    name: Build binaries & publish release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # required by git-cliff
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sodp-go/go.mod
+          cache-dependency-path: sodp-go/go.sum
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#go/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build cross-compiled binaries
+        run: |
+          set -e
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            ext=""
+            [ "$GOOS" = "windows" ] && ext=".exe"
+            GOOS=$GOOS GOARCH=$GOARCH go build \
+              -ldflags="-s -w" \
+              -o "dist/sodp-server-${GOOS}-${GOARCH}${ext}" \
+              ./sodp-go/cmd/sodp-server
+          done
+
+      - name: Archive binaries
+        run: |
+          cd dist
+          for f in sodp-server-linux-* sodp-server-darwin-*; do
+            tar czf "${f}.tar.gz" "$f" && rm "$f"
+          done
+          zip sodp-server-windows-amd64.zip sodp-server-windows-amd64.exe
+          rm sodp-server-windows-amd64.exe
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --include-path "sodp-go/**" --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Go ${{ steps.version.outputs.version }}" \
+            --notes-file RELEASE_NOTES.md \
+            dist/*

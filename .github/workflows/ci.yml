@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   # ── Rust server ─────────────────────────────────────────────────────────────
@@ -119,3 +119,24 @@ jobs:
           java-version: 17
           cache: maven
       - run: mvn --no-transfer-progress test
+
+  # ── Go server (sodp-go) ──────────────────────────────────────────────────────
+  go:
+    name: Go server (vet · test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sodp-go
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sodp-go/go.mod
+          cache-dependency-path: sodp-go/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
