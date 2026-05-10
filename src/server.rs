@@ -1,19 +1,22 @@
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
 use crate::acl::AclRegistry;
 use crate::cluster::RedisCluster;
-use crate::fanout::{encode_delta_body, FanoutBus, Subscriber};
-use crate::frame::{self, types, Frame, OutboundMsg};
+use crate::fanout::{FanoutBus, Subscriber, encode_delta_body};
+use crate::frame::{self, Frame, OutboundMsg, types};
 use crate::schema::SchemaRegistry;
 use crate::session::Session;
 use crate::state::StateStore;
@@ -50,13 +53,19 @@ fn read_acl() -> Option<Arc<AclRegistry>> {
 fn read_jwt_config() -> Option<JwtConfig> {
     // Inline PEM (newlines may be escaped as \n in env vars).
     if let Ok(pem) = std::env::var("SODP_JWT_PUBLIC_KEY") {
-        return Some(JwtConfig::Rs256 { public_key_pem: pem.replace("\\n", "\n") });
+        return Some(JwtConfig::Rs256 {
+            public_key_pem: pem.replace("\\n", "\n"),
+        });
     }
     // PEM loaded from a file path.
     if let Ok(path) = std::env::var("SODP_JWT_PUBLIC_KEY_FILE") {
         match std::fs::read_to_string(&path) {
-            Ok(pem) => return Some(JwtConfig::Rs256 { public_key_pem: pem }),
-            Err(e)  => error!("Failed to read SODP_JWT_PUBLIC_KEY_FILE '{path}': {e}"),
+            Ok(pem) => {
+                return Some(JwtConfig::Rs256 {
+                    public_key_pem: pem,
+                });
+            }
+            Err(e) => error!("Failed to read SODP_JWT_PUBLIC_KEY_FILE '{path}': {e}"),
         }
     }
     // Fallback: shared HS256 secret.
@@ -73,7 +82,11 @@ fn exp_remaining(exp: usize) -> Duration {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let exp_secs = exp as u64;
-    if exp_secs > now { Duration::from_secs(exp_secs - now) } else { Duration::ZERO }
+    if exp_secs > now {
+        Duration::from_secs(exp_secs - now)
+    } else {
+        Duration::ZERO
+    }
 }
 
 /// JWT claims decoded from a client AUTH frame.
@@ -86,19 +99,19 @@ pub struct Claims {
 }
 
 pub struct SodpServer {
-    pub state:            Arc<StateStore>,
-    pub fanout:           Arc<FanoutBus>,
-    pub schema:           Option<Arc<SchemaRegistry>>,
+    pub state: Arc<StateStore>,
+    pub fanout: Arc<FanoutBus>,
+    pub schema: Option<Arc<SchemaRegistry>>,
     /// Per-key ACL.  `None` = ACL disabled (all access allowed).
-    pub acl:              Option<Arc<AclRegistry>>,
+    pub acl: Option<Arc<AclRegistry>>,
     /// JWT validation config.  `None` = auth disabled.
-    pub jwt_config:       Option<JwtConfig>,
+    pub jwt_config: Option<JwtConfig>,
     /// Live connection counter (incremented on accept, decremented on exit).
-    pub connections:      Arc<AtomicUsize>,
+    pub connections: Arc<AtomicUsize>,
     /// Maximum concurrent connections (`SODP_MAX_CONNECTIONS`).  `None` = unlimited.
-    pub max_connections:  Option<usize>,
+    pub max_connections: Option<usize>,
     /// Maximum inbound frame size in bytes (`SODP_MAX_FRAME_BYTES`).  Default: 1 MiB.
-    pub max_frame_bytes:  usize,
+    pub max_frame_bytes: usize,
     /// Seconds between outbound WebSocket pings (`SODP_WS_PING_INTERVAL`).  0 = disabled.
     pub ws_ping_interval: u64,
     /// Max CALL frames per second per session (`SODP_RATE_WRITES_PER_SEC`).  `None` = unlimited.
@@ -140,80 +153,112 @@ fn read_limits() -> (Option<usize>, usize, u64, Option<u32>, Option<u32>, usize)
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(crate::fanout::DEFAULT_BACKPRESSURE_LIMIT);
-    (max_connections, max_frame_bytes, ws_ping_interval, rate_writes, rate_watches, backpressure_limit)
+    (
+        max_connections,
+        max_frame_bytes,
+        ws_ping_interval,
+        rate_writes,
+        rate_watches,
+        backpressure_limit,
+    )
 }
 
 impl SodpServer {
     pub fn new() -> Arc<Self> {
-        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec, backpressure_limit) = read_limits();
-        Arc::new(SodpServer {
-            state:                StateStore::new(),
-            fanout:               FanoutBus::new(),
-            schema:               None,
-            acl:                  read_acl(),
-            jwt_config:           read_jwt_config(),
-            connections:          Arc::new(AtomicUsize::new(0)),
+        let (
             max_connections,
             max_frame_bytes,
             ws_ping_interval,
             rate_writes_per_sec,
             rate_watches_per_sec,
-            cluster:              None,
             backpressure_limit,
-            write_mode:           WriteMode::from_env(),
+        ) = read_limits();
+        Arc::new(SodpServer {
+            state: StateStore::new(),
+            fanout: FanoutBus::new(),
+            schema: None,
+            acl: read_acl(),
+            jwt_config: read_jwt_config(),
+            connections: Arc::new(AtomicUsize::new(0)),
+            max_connections,
+            max_frame_bytes,
+            ws_ping_interval,
+            rate_writes_per_sec,
+            rate_watches_per_sec,
+            cluster: None,
+            backpressure_limit,
+            write_mode: WriteMode::from_env(),
         })
     }
 
     pub fn new_persistent(log_dir: &std::path::Path) -> anyhow::Result<Arc<Self>> {
-        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec, backpressure_limit) = read_limits();
-        Ok(Arc::new(SodpServer {
-            state:                StateStore::open(log_dir)?,
-            fanout:               FanoutBus::new(),
-            schema:               None,
-            acl:                  read_acl(),
-            jwt_config:           read_jwt_config(),
-            connections:          Arc::new(AtomicUsize::new(0)),
+        let (
             max_connections,
             max_frame_bytes,
             ws_ping_interval,
             rate_writes_per_sec,
             rate_watches_per_sec,
-            cluster:              None,
             backpressure_limit,
-            write_mode:           WriteMode::from_env(),
+        ) = read_limits();
+        Ok(Arc::new(SodpServer {
+            state: StateStore::open(log_dir)?,
+            fanout: FanoutBus::new(),
+            schema: None,
+            acl: read_acl(),
+            jwt_config: read_jwt_config(),
+            connections: Arc::new(AtomicUsize::new(0)),
+            max_connections,
+            max_frame_bytes,
+            ws_ping_interval,
+            rate_writes_per_sec,
+            rate_watches_per_sec,
+            cluster: None,
+            backpressure_limit,
+            write_mode: WriteMode::from_env(),
         }))
     }
 
     /// Create a server with an optional on-disk log and a JSON schema file.
     pub fn with_schema(
-        log_dir:     Option<&std::path::Path>,
+        log_dir: Option<&std::path::Path>,
         schema_path: &std::path::Path,
     ) -> anyhow::Result<Arc<Self>> {
-        let (max_connections, max_frame_bytes, ws_ping_interval, rate_writes_per_sec, rate_watches_per_sec, backpressure_limit) = read_limits();
-        let schema = SchemaRegistry::from_file(schema_path)?;
-        let state  = match log_dir {
-            Some(dir) => StateStore::open(dir)?,
-            None      => StateStore::new(),
-        };
-        Ok(Arc::new(SodpServer {
-            state,
-            fanout:               FanoutBus::new(),
-            schema:               Some(Arc::new(schema)),
-            acl:                  read_acl(),
-            jwt_config:           read_jwt_config(),
-            connections:          Arc::new(AtomicUsize::new(0)),
+        let (
             max_connections,
             max_frame_bytes,
             ws_ping_interval,
             rate_writes_per_sec,
             rate_watches_per_sec,
-            cluster:              None,
             backpressure_limit,
-            write_mode:           WriteMode::from_env(),
+        ) = read_limits();
+        let schema = SchemaRegistry::from_file(schema_path)?;
+        let state = match log_dir {
+            Some(dir) => StateStore::open(dir)?,
+            None => StateStore::new(),
+        };
+        Ok(Arc::new(SodpServer {
+            state,
+            fanout: FanoutBus::new(),
+            schema: Some(Arc::new(schema)),
+            acl: read_acl(),
+            jwt_config: read_jwt_config(),
+            connections: Arc::new(AtomicUsize::new(0)),
+            max_connections,
+            max_frame_bytes,
+            ws_ping_interval,
+            rate_writes_per_sec,
+            rate_watches_per_sec,
+            cluster: None,
+            backpressure_limit,
+            write_mode: WriteMode::from_env(),
         }))
     }
 
-    pub async fn listen(self: Arc<Self>, addr: &str, shutdown: CancellationToken) -> anyhow::Result<()> {
+    pub async fn listen(
+        self: Arc<Self>,
+        addr: &str,
+        shutdown: CancellationToken,
+    ) -> anyhow::Result<()> {
         let listener = TcpListener::bind(addr).await?;
         info!("SODP server listening on {addr}");
 
@@ -253,7 +298,11 @@ impl SodpServer {
         Ok(())
     }
 
-    async fn handle_connection(self: Arc<Self>, stream: TcpStream, shutdown: CancellationToken) -> anyhow::Result<()> {
+    async fn handle_connection(
+        self: Arc<Self>,
+        stream: TcpStream,
+        shutdown: CancellationToken,
+    ) -> anyhow::Result<()> {
         // Disable Nagle's algorithm so small frames (e.g. 54-byte DELTAs) are
         // transmitted immediately rather than waiting for a full-MSS coalesce.
         stream.set_nodelay(true)?;
@@ -273,7 +322,11 @@ impl SodpServer {
             "resume": true,
             "backpressure_limit": self.backpressure_limit,
         });
-        ws_tx.send(Message::Binary(frame::hello(auth_required, capabilities).encode()?)).await?;
+        ws_tx
+            .send(Message::Binary(
+                frame::hello(auth_required, capabilities).encode()?,
+            ))
+            .await?;
 
         // If auth is enabled, complete the JWT handshake before the event loop.
         // auth_handshake uses ws_tx directly (WriteHandle doesn't exist yet).
@@ -281,7 +334,7 @@ impl SodpServer {
             match self.auth_handshake(&mut ws_rx, &mut ws_tx, config).await {
                 Ok(claims) => {
                     info!("Session {session_id} authenticated as '{}'", claims.sub);
-                    session.sub    = Some(claims.sub.clone());
+                    session.sub = Some(claims.sub.clone());
                     session.claims = serde_json::Value::Object(claims.extra.clone());
                     Some(claims)
                 }
@@ -312,10 +365,8 @@ impl SodpServer {
         } else {
             Duration::from_secs(self.ws_ping_interval)
         };
-        let mut ping_ticker = tokio::time::interval_at(
-            tokio::time::Instant::now() + ping_period,
-            ping_period,
-        );
+        let mut ping_ticker =
+            tokio::time::interval_at(tokio::time::Instant::now() + ping_period, ping_period);
         let mut awaiting_pong = false;
 
         // Slow-consumer cancellation token — shared with the WriteHandle so that
@@ -323,7 +374,9 @@ impl SodpServer {
         let slow_cancel = CancellationToken::new();
 
         // ws_tx moves into the WriteHandle; all writes from here on go through it.
-        let handle = self.write_mode.make_handle(ws_tx, self.backpressure_limit, slow_cancel.clone());
+        let handle =
+            self.write_mode
+                .make_handle(ws_tx, self.backpressure_limit, slow_cancel.clone());
 
         // Single-task event loop — inbound only; writes are pool-handled.
         loop {
@@ -392,7 +445,7 @@ impl SodpServer {
         for entry in &session.presence {
             let current = match self.state.get(&entry.state_key) {
                 Some(e) => e.value,
-                None    => continue,
+                None => continue,
             };
             let updated = json_remove_in(current, &entry.path);
             let (version, ops) = self.state.apply(&entry.state_key, updated.clone());
@@ -419,25 +472,32 @@ impl SodpServer {
     /// clients).  Any other frame type before AUTH is rejected with 401.
     async fn auth_handshake(
         &self,
-        ws_rx:  &mut SplitStream<WebSocketStream<TcpStream>>,
-        ws_tx:  &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+        ws_rx: &mut SplitStream<WebSocketStream<TcpStream>>,
+        ws_tx: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
         config: &JwtConfig,
     ) -> anyhow::Result<Claims> {
         loop {
             match ws_rx.next().await {
                 Some(Ok(Message::Binary(bytes))) => {
                     if bytes.len() > self.max_frame_bytes {
-                        let _ = ws_tx.send(Message::Binary(
-                            frame::error(0, 0, 413, "frame too large").encode()?
-                        )).await;
-                        return Err(anyhow::anyhow!("frame too large during auth ({} B)", bytes.len()));
+                        let _ = ws_tx
+                            .send(Message::Binary(
+                                frame::error(0, 0, 413, "frame too large").encode()?,
+                            ))
+                            .await;
+                        return Err(anyhow::anyhow!(
+                            "frame too large during auth ({} B)",
+                            bytes.len()
+                        ));
                     }
                     let frame = match Frame::decode(&bytes) {
-                        Ok(f)  => f,
+                        Ok(f) => f,
                         Err(e) => {
-                            let _ = ws_tx.send(Message::Binary(
-                                frame::error(0, 0, 401, "bad frame during auth").encode()?
-                            )).await;
+                            let _ = ws_tx
+                                .send(Message::Binary(
+                                    frame::error(0, 0, 401, "bad frame during auth").encode()?,
+                                ))
+                                .await;
                             return Err(e.into());
                         }
                     };
@@ -445,42 +505,55 @@ impl SodpServer {
                     match frame.frame_type {
                         types::HEARTBEAT => {
                             // Allow heartbeats during auth; echo one back.
-                            let _ = ws_tx.send(Message::Binary(frame::heartbeat().encode()?)).await;
+                            let _ = ws_tx
+                                .send(Message::Binary(frame::heartbeat().encode()?))
+                                .await;
                         }
 
                         types::AUTH => {
-                            let token = frame.body
+                            let token = frame
+                                .body
                                 .get("token")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
 
                             match Self::validate_jwt(token, config) {
                                 Ok(claims) => {
-                                    ws_tx.send(Message::Binary(
-                                        frame::auth_ok(&claims.sub).encode()?
-                                    )).await?;
+                                    ws_tx
+                                        .send(Message::Binary(
+                                            frame::auth_ok(&claims.sub).encode()?,
+                                        ))
+                                        .await?;
                                     return Ok(claims);
                                 }
                                 Err(e) => {
                                     let msg = format!("auth failed: {e}");
-                                    let _ = ws_tx.send(Message::Binary(
-                                        frame::error(0, 0, 401, &msg).encode()?
-                                    )).await;
+                                    let _ = ws_tx
+                                        .send(Message::Binary(
+                                            frame::error(0, 0, 401, &msg).encode()?,
+                                        ))
+                                        .await;
                                     return Err(anyhow::anyhow!(msg));
                                 }
                             }
                         }
 
                         _ => {
-                            let _ = ws_tx.send(Message::Binary(
-                                frame::error(0, 0, 401, "auth required").encode()?
-                            )).await;
-                            return Err(anyhow::anyhow!("auth required — unexpected frame before AUTH"));
+                            let _ = ws_tx
+                                .send(Message::Binary(
+                                    frame::error(0, 0, 401, "auth required").encode()?,
+                                ))
+                                .await;
+                            return Err(anyhow::anyhow!(
+                                "auth required — unexpected frame before AUTH"
+                            ));
                         }
                     }
                 }
                 Some(Ok(Message::Ping(_))) => {
-                    let _ = ws_tx.send(Message::Binary(frame::heartbeat().encode()?)).await;
+                    let _ = ws_tx
+                        .send(Message::Binary(frame::heartbeat().encode()?))
+                        .await;
                 }
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
                     return Err(anyhow::anyhow!("connection closed before auth"));
@@ -503,7 +576,7 @@ impl SodpServer {
             ),
         };
         let mut validation = Validation::new(algo);
-        validation.leeway = 0;  // no clock-skew tolerance — tokens must not be expired
+        validation.leeway = 0; // no clock-skew tolerance — tokens must not be expired
         let data = decode::<Claims>(token, &key, &validation)
             .map_err(|e| anyhow::anyhow!("JWT error: {e}"))?;
         Ok(data.claims)
@@ -516,22 +589,22 @@ impl SodpServer {
         handle: &Arc<WriteHandle>,
     ) -> anyhow::Result<()> {
         let type_label: &'static str = match frame.frame_type {
-            types::WATCH     => "watch",
-            types::CALL      => "call",
-            types::RESUME    => "resume",
-            types::UNWATCH   => "unwatch",
-            types::ACK       => "ack",
+            types::WATCH => "watch",
+            types::CALL => "call",
+            types::RESUME => "resume",
+            types::UNWATCH => "unwatch",
+            types::ACK => "ack",
             types::HEARTBEAT => "heartbeat",
-            _                => "unknown",
+            _ => "unknown",
         };
         metrics::counter!("sodp_frames_rx_total", "type" => type_label).increment(1);
 
         match frame.frame_type {
-            types::WATCH     => self.handle_watch(frame, session, handle).await,
-            types::RESUME    => self.handle_resume(frame, session, handle).await,
-            types::UNWATCH   => self.handle_unwatch(frame, session),
-            types::CALL      => self.handle_call(frame, session, handle).await,
-            types::ACK       => {
+            types::WATCH => self.handle_watch(frame, session, handle).await,
+            types::RESUME => self.handle_resume(frame, session, handle).await,
+            types::UNWATCH => self.handle_unwatch(frame, session),
+            types::CALL => self.handle_call(frame, session, handle).await,
+            types::ACK => {
                 session.ack_stream(frame.stream_id, {
                     frame.body.get("seq").and_then(|v| v.as_u64()).unwrap_or(0)
                 });
@@ -541,7 +614,10 @@ impl SodpServer {
                 handle.send(OutboundMsg::Frame(frame::heartbeat()));
                 Ok(())
             }
-            t => { warn!("Unhandled frame type: {t:#04x}"); Ok(()) }
+            t => {
+                warn!("Unhandled frame type: {t:#04x}");
+                Ok(())
+            }
         }
     }
 
@@ -554,42 +630,57 @@ impl SodpServer {
         handle: &Arc<WriteHandle>,
     ) -> anyhow::Result<()> {
         if let Some(ref mut lim) = session.watch_limiter
-            && !lim.allow() {
-                metrics::counter!("sodp_rate_limited_total", "type" => "watch").increment(1);
-                let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded")
-                ));
-                return Ok(());
-            }
+            && !lim.allow()
+        {
+            metrics::counter!("sodp_rate_limited_total", "type" => "watch").increment(1);
+            let seq = session.next_seq();
+            handle.send(OutboundMsg::Frame(frame::error(
+                frame.stream_id,
+                seq,
+                429,
+                "rate limit exceeded",
+            )));
+            return Ok(());
+        }
 
         // Multi-key: `states` array takes priority over single `state` string.
-        let keys: Vec<String> = if let Some(arr) = frame.body.get("states").and_then(|v| v.as_array()) {
-            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-        } else if let Some(k) = frame.body.get("state").and_then(|v| v.as_str()) {
-            vec![k.to_string()]
-        } else {
-            let seq = session.next_seq();
-            handle.send(OutboundMsg::Frame(
-                frame::error(frame.stream_id, seq, 400, "WATCH: missing 'state' or 'states' key")
-            ));
-            return Ok(());
-        };
+        let keys: Vec<String> =
+            if let Some(arr) = frame.body.get("states").and_then(|v| v.as_array()) {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            } else if let Some(k) = frame.body.get("state").and_then(|v| v.as_str()) {
+                vec![k.to_string()]
+            } else {
+                let seq = session.next_seq();
+                handle.send(OutboundMsg::Frame(frame::error(
+                    frame.stream_id,
+                    seq,
+                    400,
+                    "WATCH: missing 'state' or 'states' key",
+                )));
+                return Ok(());
+            };
 
         let params = frame.body.get("params").cloned();
 
         for state_key in keys {
             // Per-key ACL check — skip forbidden keys with ERROR 403.
             if let Some(acl) = &self.acl
-                && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
-                    let seq = session.next_seq();
-                    handle.send(OutboundMsg::Frame(
-                        frame::error(0, seq, 403, &format!("forbidden: {state_key}"))
-                    ));
-                    continue;
-                }
+                && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims)
+            {
+                let seq = session.next_seq();
+                handle.send(OutboundMsg::Frame(frame::error(
+                    0,
+                    seq,
+                    403,
+                    &format!("forbidden: {state_key}"),
+                )));
+                continue;
+            }
 
-            self.subscribe_key(&state_key, params.clone(), session, handle).await?;
+            self.subscribe_key(&state_key, params.clone(), session, handle)
+                .await?;
         }
 
         Ok(())
@@ -617,24 +708,33 @@ impl SodpServer {
 
         let (version, value, initialized) = match self.state.get(state_key) {
             Some(e) => (e.version, e.value, true),
-            None    => (0, serde_json::Value::Null, false),
+            None => (0, serde_json::Value::Null, false),
         };
 
         let seq = session.next_seq();
-        handle.send(OutboundMsg::Frame(
-            frame::state_init(stream_id, seq, state_key, version, value, initialized, params)
-        ));
+        handle.send(OutboundMsg::Frame(frame::state_init(
+            stream_id,
+            seq,
+            state_key,
+            version,
+            value,
+            initialized,
+            params,
+        )));
 
-        debug!("Session {} watching '{}' on stream {}", session.id, state_key, stream_id);
+        debug!(
+            "Session {} watching '{}' on stream {}",
+            session.id, state_key, stream_id
+        );
         Ok(())
     }
-
 
     // --- UNWATCH ---
 
     fn handle_unwatch(&self, frame: Frame, session: &mut Session) -> anyhow::Result<()> {
         // Multi-key: `states` array takes priority over single `state` string.
-        let keys: Vec<&str> = if let Some(arr) = frame.body.get("states").and_then(|v| v.as_array()) {
+        let keys: Vec<&str> = if let Some(arr) = frame.body.get("states").and_then(|v| v.as_array())
+        {
             arr.iter().filter_map(|v| v.as_str()).collect()
         } else if let Some(k) = frame.body.get("state").and_then(|v| v.as_str()) {
             vec![k]
@@ -661,36 +761,48 @@ impl SodpServer {
         handle: &Arc<WriteHandle>,
     ) -> anyhow::Result<()> {
         if let Some(ref mut lim) = session.watch_limiter
-            && !lim.allow() {
-                metrics::counter!("sodp_rate_limited_total", "type" => "resume").increment(1);
-                let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded")
-                ));
-                return Ok(());
-            }
+            && !lim.allow()
+        {
+            metrics::counter!("sodp_rate_limited_total", "type" => "resume").increment(1);
+            let seq = session.next_seq();
+            handle.send(OutboundMsg::Frame(frame::error(
+                frame.stream_id,
+                seq,
+                429,
+                "rate limit exceeded",
+            )));
+            return Ok(());
+        }
 
         let state_key = match frame.body.get("state").and_then(|v| v.as_str()) {
             Some(k) => k.to_string(),
             None => {
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::error(frame.stream_id, seq, 400, "RESUME: missing 'state' key")
-                ));
+                handle.send(OutboundMsg::Frame(frame::error(
+                    frame.stream_id,
+                    seq,
+                    400,
+                    "RESUME: missing 'state' key",
+                )));
                 return Ok(());
             }
         };
 
         if let Some(acl) = &self.acl
-            && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims) {
-                let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::error(frame.stream_id, seq, 403, "forbidden")
-                ));
-                return Ok(());
-            }
+            && !acl.can_read(&state_key, session.sub.as_deref(), &session.claims)
+        {
+            let seq = session.next_seq();
+            handle.send(OutboundMsg::Frame(frame::error(
+                frame.stream_id,
+                seq,
+                403,
+                "forbidden",
+            )));
+            return Ok(());
+        }
 
-        let since_version = frame.body
+        let since_version = frame
+            .body
             .get("since_version")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
@@ -722,12 +834,18 @@ impl SodpServer {
         // Conclude with STATE_INIT — consistent "you are now live" marker.
         let (version, value, initialized) = match self.state.get(&state_key) {
             Some(e) => (e.version, e.value, true),
-            None    => (0, serde_json::Value::Null, false),
+            None => (0, serde_json::Value::Null, false),
         };
         let seq = session.next_seq();
-        handle.send(OutboundMsg::Frame(
-            frame::state_init(stream_id, seq, &state_key, version, value, initialized, params)
-        ));
+        handle.send(OutboundMsg::Frame(frame::state_init(
+            stream_id,
+            seq,
+            &state_key,
+            version,
+            value,
+            initialized,
+            params,
+        )));
 
         debug!(
             "Session {} resumed '{}' on stream {} since v{}",
@@ -755,43 +873,58 @@ impl SodpServer {
             Some(m) => m.to_string(),
             None => {
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::error(frame.stream_id, seq, 400, "CALL: missing 'method'")
-                ));
+                handle.send(OutboundMsg::Frame(frame::error(
+                    frame.stream_id,
+                    seq,
+                    400,
+                    "CALL: missing 'method'",
+                )));
                 return Ok(());
             }
         };
 
-        let args = frame.body.get("args").cloned().unwrap_or(serde_json::Value::Null);
+        let args = frame
+            .body
+            .get("args")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
 
         if let Some(ref mut lim) = session.write_limiter
-            && !lim.allow() {
-                metrics::counter!("sodp_rate_limited_total", "type" => "write").increment(1);
-                let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::error(frame.stream_id, seq, 429, "rate limit exceeded")
-                ));
-                return Ok(());
-            }
+            && !lim.allow()
+        {
+            metrics::counter!("sodp_rate_limited_total", "type" => "write").increment(1);
+            let seq = session.next_seq();
+            handle.send(OutboundMsg::Frame(frame::error(
+                frame.stream_id,
+                seq,
+                429,
+                "rate limit exceeded",
+            )));
+            return Ok(());
+        }
 
         // ACL write check — all CALL methods carry the target key in args.state.
         if let Some(acl) = &self.acl
             && let Some(state_key) = args.get("state").and_then(|v| v.as_str())
-                && !acl.can_write(state_key, session.sub.as_deref(), &session.claims) {
-                    let seq = session.next_seq();
-                    handle.send(OutboundMsg::Frame(
-                        frame::error(frame.stream_id, seq, 403, "forbidden")
-                    ));
-                    return Ok(());
-                }
+            && !acl.can_write(state_key, session.sub.as_deref(), &session.claims)
+        {
+            let seq = session.next_seq();
+            handle.send(OutboundMsg::Frame(frame::error(
+                frame.stream_id,
+                seq,
+                403,
+                "forbidden",
+            )));
+            return Ok(());
+        }
 
         let method_label: &'static str = match method.as_str() {
-            "state.set"      => "state.set",
-            "state.patch"    => "state.patch",
-            "state.set_in"   => "state.set_in",
-            "state.delete"   => "state.delete",
+            "state.set" => "state.set",
+            "state.patch" => "state.patch",
+            "state.set_in" => "state.set_in",
+            "state.delete" => "state.delete",
             "state.presence" => "state.presence",
-            _                => "unknown",
+            _ => "unknown",
         };
         metrics::counter!("sodp_calls_total", "method" => method_label).increment(1);
 
@@ -800,25 +933,32 @@ impl SodpServer {
             // args: { state: "<key>", value: <any> }
             "state.set" => {
                 let (state_key, new_value) = match extract_state_and_value(&args, "state.set") {
-                    Ok(v)    => v,
+                    Ok(v) => v,
                     Err(msg) => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, &msg)
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            &msg,
+                        )));
                         return Ok(());
                     }
                 };
 
                 // Validate against schema before applying.
                 if let Some(schema) = &self.schema
-                    && let Err(msg) = schema.validate(&state_key, &new_value) {
-                        let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 422, &msg)
-                        ));
-                        return Ok(());
-                    }
+                    && let Err(msg) = schema.validate(&state_key, &new_value)
+                {
+                    let seq = session.next_seq();
+                    handle.send(OutboundMsg::Frame(frame::error(
+                        frame.stream_id,
+                        seq,
+                        422,
+                        &msg,
+                    )));
+                    return Ok(());
+                }
 
                 let (version, ops) = self.state.apply(&state_key, new_value.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -841,12 +981,12 @@ impl SodpServer {
                 }
 
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::result_ok(
-                        frame.stream_id, seq, &call_id,
-                        Some(serde_json::json!({ "version": version })),
-                    )
-                ));
+                handle.send(OutboundMsg::Frame(frame::result_ok(
+                    frame.stream_id,
+                    seq,
+                    &call_id,
+                    Some(serde_json::json!({ "version": version })),
+                )));
             }
 
             // state.patch — shallow-merge a partial object into existing state
@@ -856,9 +996,12 @@ impl SodpServer {
                     Some(k) => k.to_string(),
                     None => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, "state.patch: missing 'state' key")
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            "state.patch: missing 'state' key",
+                        )));
                         return Ok(());
                     }
                 };
@@ -867,14 +1010,18 @@ impl SodpServer {
                     Some(p) if p.is_object() => p,
                     _ => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, "state.patch: 'patch' must be an object")
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            "state.patch: 'patch' must be an object",
+                        )));
                         return Ok(());
                     }
                 };
 
-                let current = self.state
+                let current = self
+                    .state
                     .get(&state_key)
                     .map(|e| e.value)
                     .unwrap_or(serde_json::json!({}));
@@ -883,13 +1030,17 @@ impl SodpServer {
 
                 // Validate the merged value against schema before applying.
                 if let Some(schema) = &self.schema
-                    && let Err(msg) = schema.validate(&state_key, &merged) {
-                        let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 422, &msg)
-                        ));
-                        return Ok(());
-                    }
+                    && let Err(msg) = schema.validate(&state_key, &merged)
+                {
+                    let seq = session.next_seq();
+                    handle.send(OutboundMsg::Frame(frame::error(
+                        frame.stream_id,
+                        seq,
+                        422,
+                        &msg,
+                    )));
+                    return Ok(());
+                }
 
                 let (version, ops) = self.state.apply(&state_key, merged.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -909,12 +1060,12 @@ impl SodpServer {
                 }
 
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::result_ok(
-                        frame.stream_id, seq, &call_id,
-                        Some(serde_json::json!({ "version": version })),
-                    )
-                ));
+                handle.send(OutboundMsg::Frame(frame::result_ok(
+                    frame.stream_id,
+                    seq,
+                    &call_id,
+                    Some(serde_json::json!({ "version": version })),
+                )));
             }
 
             // state.set_in — atomically set a nested field by JSON-pointer path
@@ -924,9 +1075,12 @@ impl SodpServer {
                     Some(k) => k.to_string(),
                     None => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, "state.set_in: missing 'state' key")
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            "state.set_in: missing 'state' key",
+                        )));
                         return Ok(());
                     }
                 };
@@ -935,35 +1089,52 @@ impl SodpServer {
                     Some(p) => p.to_string(),
                     None => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, "state.set_in: missing 'path' key")
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            "state.set_in: missing 'path' key",
+                        )));
                         return Ok(());
                     }
                 };
 
-                let new_val = args.get("value").cloned().unwrap_or(serde_json::Value::Null);
-                let current = self.state.get(&state_key).map(|e| e.value).unwrap_or(serde_json::Value::Null);
+                let new_val = args
+                    .get("value")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let current = self
+                    .state
+                    .get(&state_key)
+                    .map(|e| e.value)
+                    .unwrap_or(serde_json::Value::Null);
 
                 let updated = match json_set_in(current, &path, new_val) {
-                    Ok(v)    => v,
+                    Ok(v) => v,
                     Err(msg) => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, &msg)
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            &msg,
+                        )));
                         return Ok(());
                     }
                 };
 
                 if let Some(schema) = &self.schema
-                    && let Err(msg) = schema.validate(&state_key, &updated) {
-                        let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 422, &msg)
-                        ));
-                        return Ok(());
-                    }
+                    && let Err(msg) = schema.validate(&state_key, &updated)
+                {
+                    let seq = session.next_seq();
+                    handle.send(OutboundMsg::Frame(frame::error(
+                        frame.stream_id,
+                        seq,
+                        422,
+                        &msg,
+                    )));
+                    return Ok(());
+                }
 
                 let (version, ops) = self.state.apply(&state_key, updated.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -981,12 +1152,12 @@ impl SodpServer {
                 }
 
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::result_ok(
-                        frame.stream_id, seq, &call_id,
-                        Some(serde_json::json!({ "version": version })),
-                    )
-                ));
+                handle.send(OutboundMsg::Frame(frame::result_ok(
+                    frame.stream_id,
+                    seq,
+                    &call_id,
+                    Some(serde_json::json!({ "version": version })),
+                )));
             }
 
             // state.delete — remove a key from the store entirely
@@ -996,9 +1167,12 @@ impl SodpServer {
                     Some(k) => k.to_string(),
                     None => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, "state.delete: missing 'state' key")
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            "state.delete: missing 'state' key",
+                        )));
                         return Ok(());
                     }
                 };
@@ -1021,12 +1195,12 @@ impl SodpServer {
                 };
 
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::result_ok(
-                        frame.stream_id, seq, &call_id,
-                        Some(serde_json::json!({ "version": version })),
-                    )
-                ));
+                handle.send(OutboundMsg::Frame(frame::result_ok(
+                    frame.stream_id,
+                    seq,
+                    &call_id,
+                    Some(serde_json::json!({ "version": version })),
+                )));
             }
 
             // state.presence — set a nested path AND bind it to the session lifetime.
@@ -1036,9 +1210,12 @@ impl SodpServer {
                     Some(k) => k.to_string(),
                     None => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, "state.presence: missing 'state' key")
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            "state.presence: missing 'state' key",
+                        )));
                         return Ok(());
                     }
                 };
@@ -1047,35 +1224,52 @@ impl SodpServer {
                     Some(p) => p.to_string(),
                     None => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, "state.presence: missing 'path' key")
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            "state.presence: missing 'path' key",
+                        )));
                         return Ok(());
                     }
                 };
 
-                let new_val = args.get("value").cloned().unwrap_or(serde_json::Value::Null);
-                let current = self.state.get(&state_key).map(|e| e.value).unwrap_or(serde_json::Value::Null);
+                let new_val = args
+                    .get("value")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let current = self
+                    .state
+                    .get(&state_key)
+                    .map(|e| e.value)
+                    .unwrap_or(serde_json::Value::Null);
 
                 let updated = match json_set_in(current, &path, new_val) {
-                    Ok(v)    => v,
+                    Ok(v) => v,
                     Err(msg) => {
                         let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 400, &msg)
-                        ));
+                        handle.send(OutboundMsg::Frame(frame::error(
+                            frame.stream_id,
+                            seq,
+                            400,
+                            &msg,
+                        )));
                         return Ok(());
                     }
                 };
 
                 if let Some(schema) = &self.schema
-                    && let Err(msg) = schema.validate(&state_key, &updated) {
-                        let seq = session.next_seq();
-                        handle.send(OutboundMsg::Frame(
-                            frame::error(frame.stream_id, seq, 422, &msg)
-                        ));
-                        return Ok(());
-                    }
+                    && let Err(msg) = schema.validate(&state_key, &updated)
+                {
+                    let seq = session.next_seq();
+                    handle.send(OutboundMsg::Frame(frame::error(
+                        frame.stream_id,
+                        seq,
+                        422,
+                        &msg,
+                    )));
+                    return Ok(());
+                }
 
                 let (version, ops) = self.state.apply(&state_key, updated.clone());
                 metrics::gauge!("sodp_state_keys").set(self.state.key_count() as f64);
@@ -1096,23 +1290,23 @@ impl SodpServer {
                 session.add_presence(state_key.clone(), path);
 
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::result_ok(
-                        frame.stream_id, seq, &call_id,
-                        Some(serde_json::json!({ "version": version })),
-                    )
-                ));
+                handle.send(OutboundMsg::Frame(frame::result_ok(
+                    frame.stream_id,
+                    seq,
+                    &call_id,
+                    Some(serde_json::json!({ "version": version })),
+                )));
             }
 
             unknown => {
                 warn!("Unknown method: {unknown}");
                 let seq = session.next_seq();
-                handle.send(OutboundMsg::Frame(
-                    frame::error(
-                        frame.stream_id, seq, 404,
-                        &format!("unknown method: {unknown}"),
-                    )
-                ));
+                handle.send(OutboundMsg::Frame(frame::error(
+                    frame.stream_id,
+                    seq,
+                    404,
+                    &format!("unknown method: {unknown}"),
+                )));
             }
         }
 
@@ -1139,24 +1333,37 @@ fn extract_state_and_value(
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("{ctx}: missing 'state' key"))?
         .to_string();
-    let value = args.get("value").cloned().unwrap_or(serde_json::Value::Null);
+    let value = args
+        .get("value")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     Ok((state_key, value))
 }
 
 /// Set a value at a JSON-pointer-style path, creating intermediate objects as needed.
 /// `"/"` replaces the root value entirely.
-fn json_set_in(root: serde_json::Value, path: &str, new_val: serde_json::Value) -> Result<serde_json::Value, String> {
+fn json_set_in(
+    root: serde_json::Value,
+    path: &str,
+    new_val: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     if path == "/" {
         return Ok(new_val);
     }
     if !path.starts_with('/') {
-        return Err(format!("state.set_in: path must start with '/', got '{path}'"));
+        return Err(format!(
+            "state.set_in: path must start with '/', got '{path}'"
+        ));
     }
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     Ok(set_in_recursive(root, &parts, new_val))
 }
 
-fn set_in_recursive(node: serde_json::Value, parts: &[&str], val: serde_json::Value) -> serde_json::Value {
+fn set_in_recursive(
+    node: serde_json::Value,
+    parts: &[&str],
+    val: serde_json::Value,
+) -> serde_json::Value {
     use serde_json::Value;
     if parts.is_empty() {
         return val;
@@ -1194,7 +1401,7 @@ fn remove_in_recursive(node: serde_json::Value, parts: &[&str]) -> serde_json::V
     use serde_json::Value;
     let mut map = match node {
         Value::Object(m) => m,
-        other            => return other, // non-object — can't traverse, leave unchanged
+        other => return other, // non-object — can't traverse, leave unchanged
     };
     if parts.len() == 1 {
         map.remove(parts[0]);

@@ -21,15 +21,27 @@ pub struct DeltaOp {
 
 impl DeltaOp {
     pub fn add(path: impl Into<String>, value: Value) -> Self {
-        DeltaOp { op: DeltaOpKind::Add, path: path.into(), value: Some(value) }
+        DeltaOp {
+            op: DeltaOpKind::Add,
+            path: path.into(),
+            value: Some(value),
+        }
     }
 
     pub fn update(path: impl Into<String>, value: Value) -> Self {
-        DeltaOp { op: DeltaOpKind::Update, path: path.into(), value: Some(value) }
+        DeltaOp {
+            op: DeltaOpKind::Update,
+            path: path.into(),
+            value: Some(value),
+        }
     }
 
     pub fn remove(path: impl Into<String>) -> Self {
-        DeltaOp { op: DeltaOpKind::Remove, path: path.into(), value: None }
+        DeltaOp {
+            op: DeltaOpKind::Remove,
+            path: path.into(),
+            value: None,
+        }
     }
 }
 

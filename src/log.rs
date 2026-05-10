@@ -18,10 +18,10 @@ use crate::delta::DeltaOp;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     pub version: u64,
-    pub key:     String,
-    pub ops:     Vec<DeltaOp>,
+    pub key: String,
+    pub ops: Vec<DeltaOp>,
     /// Full state value after this mutation.
-    pub value:   serde_json::Value,
+    pub value: serde_json::Value,
 }
 
 // ── On-disk record format ─────────────────────────────────────────────────────
@@ -73,9 +73,10 @@ fn list_segments(log_dir: &Path) -> anyhow::Result<Vec<u64>> {
         let name = e?.file_name().into_string().unwrap_or_default();
         if let Some(rest) = name.strip_prefix(SEGMENT_PREFIX)
             && let Some(num_str) = rest.strip_suffix(SEGMENT_SUFFIX)
-                && let Ok(n) = num_str.parse::<u64>() {
-                    nums.push(n);
-                }
+            && let Ok(n) = num_str.parse::<u64>()
+        {
+            nums.push(n);
+        }
     }
     nums.sort_unstable();
     Ok(nums)
@@ -86,7 +87,7 @@ fn list_segments(log_dir: &Path) -> anyhow::Result<Vec<u64>> {
 /// If the file ends with a partial record (crash-during-write), it is
 /// truncated to the last fully-written byte before returning.
 fn replay_segment(path: &Path) -> anyhow::Result<Vec<LogEntry>> {
-    let mut entries   = Vec::new();
+    let mut entries = Vec::new();
     let mut valid_pos = 0u64;
 
     {
@@ -94,8 +95,11 @@ fn replay_segment(path: &Path) -> anyhow::Result<Vec<LogEntry>> {
         loop {
             let pos_before = r.stream_position()?;
             match read_entry(&mut r) {
-                Ok(Some(e))  => { valid_pos = r.stream_position()?; entries.push(e); }
-                Ok(None)     => break,  // clean EOF between records
+                Ok(Some(e)) => {
+                    valid_pos = r.stream_position()?;
+                    entries.push(e);
+                }
+                Ok(None) => break, // clean EOF between records
                 Err(e) => {
                     warn!("Truncated log record at byte {pos_before} in {path:?}: {e}");
                     break;
@@ -108,7 +112,10 @@ fn replay_segment(path: &Path) -> anyhow::Result<Vec<LogEntry>> {
     let actual = fs::metadata(path)?.len();
     if actual != valid_pos {
         warn!("Truncating {path:?} from {actual} to {valid_pos} bytes (crash recovery)");
-        OpenOptions::new().write(true).open(path)?.set_len(valid_pos)?;
+        OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .set_len(valid_pos)?;
     }
 
     Ok(entries)
@@ -125,11 +132,11 @@ fn replay_segment(path: &Path) -> anyhow::Result<Vec<LogEntry>> {
 /// cache — sufficient to survive a process crash.  For power-loss or OS-crash
 /// durability, un-comment the `sync_data()` call inside `append`.
 pub struct SegmentedLog {
-    log_dir:            PathBuf,
-    current_seg:        u64,
-    writer:             BufWriter<File>,
-    pub(crate) entry_count:   usize,
-    segment_count:      usize,
+    log_dir: PathBuf,
+    current_seg: u64,
+    writer: BufWriter<File>,
+    pub(crate) entry_count: usize,
+    segment_count: usize,
 }
 
 impl SegmentedLog {
@@ -142,21 +149,26 @@ impl SegmentedLog {
         fs::create_dir_all(log_dir)?;
 
         let segments = list_segments(log_dir)?;
-        let mut all_entries:    Vec<LogEntry> = Vec::new();
-        let mut last_seg_count: usize         = 0;
+        let mut all_entries: Vec<LogEntry> = Vec::new();
+        let mut last_seg_count: usize = 0;
 
         for (i, &seg_num) in segments.iter().enumerate() {
-            let path   = segment_path(log_dir, seg_num);
-            let chunk  = replay_segment(&path)?;
+            let path = segment_path(log_dir, seg_num);
+            let chunk = replay_segment(&path)?;
             info!("Log: replayed {} entries from {path:?}", chunk.len());
-            if i + 1 == segments.len() { last_seg_count = chunk.len(); }
+            if i + 1 == segments.len() {
+                last_seg_count = chunk.len();
+            }
             all_entries.extend(chunk);
         }
 
         // Open (or create) the current segment for appending.
         let current_seg = segments.last().copied().unwrap_or(0);
-        let seg_path    = segment_path(log_dir, current_seg);
-        let file        = OpenOptions::new().create(true).append(true).open(&seg_path)?;
+        let seg_path = segment_path(log_dir, current_seg);
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&seg_path)?;
 
         info!(
             "Log ready in {log_dir:?}: {} total entries, segment {current_seg} \
@@ -166,10 +178,10 @@ impl SegmentedLog {
 
         Ok((
             SegmentedLog {
-                log_dir:       log_dir.to_owned(),
+                log_dir: log_dir.to_owned(),
                 current_seg,
-                writer:        BufWriter::new(file),
-                entry_count:   last_seg_count,
+                writer: BufWriter::new(file),
+                entry_count: last_seg_count,
                 segment_count: segments.len().max(1),
             },
             all_entries,
@@ -182,7 +194,7 @@ impl SegmentedLog {
             self.rotate()?;
         }
         write_entry(&mut self.writer, entry)?;
-        self.writer.flush()?;           // flush BufWriter → kernel page cache
+        self.writer.flush()?; // flush BufWriter → kernel page cache
         // Uncomment for power-loss / OS-crash durability (~1–5 ms per write on SSD):
         // self.writer.get_mut().sync_data()?;
         self.entry_count += 1;
@@ -193,7 +205,10 @@ impl SegmentedLog {
         self.writer.flush()?;
         self.current_seg += 1;
         let path = segment_path(&self.log_dir, self.current_seg);
-        let file = OpenOptions::new().create_new(true).append(true).open(&path)?;
+        let file = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&path)?;
         self.writer = BufWriter::new(file);
         self.entry_count = 0;
         self.segment_count += 1;
@@ -227,7 +242,10 @@ impl SegmentedLog {
         self.current_seg += 1;
         let snap_path = segment_path(&self.log_dir, self.current_seg);
         {
-            let snap_file = OpenOptions::new().create_new(true).write(true).open(&snap_path)?;
+            let snap_file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&snap_path)?;
             let mut snap_writer = BufWriter::new(snap_file);
             for entry in snapshot {
                 write_entry(&mut snap_writer, entry)?;
@@ -238,7 +256,10 @@ impl SegmentedLog {
         // Open a fresh segment for all subsequent live writes.
         self.current_seg += 1;
         let new_path = segment_path(&self.log_dir, self.current_seg);
-        let new_file = OpenOptions::new().create_new(true).append(true).open(&new_path)?;
+        let new_file = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&new_path)?;
         self.writer = BufWriter::new(new_file);
         self.entry_count = 0;
         self.segment_count = 2; // snapshot segment + live write segment
@@ -253,7 +274,9 @@ impl SegmentedLog {
 
         info!(
             "Log: compacted — snapshot in {:?}, writing to {:?} ({} keys)",
-            snap_path, new_path, snapshot.len()
+            snap_path,
+            new_path,
+            snapshot.len()
         );
         Ok(())
     }
@@ -288,7 +311,8 @@ mod tests {
         {
             let (mut log, replayed) = SegmentedLog::open(dir.path()).unwrap();
             assert!(replayed.is_empty());
-            log.append(&entry("k1", 1, serde_json::json!({"x": 1}))).unwrap();
+            log.append(&entry("k1", 1, serde_json::json!({"x": 1})))
+                .unwrap();
         }
         let (_log, replayed) = SegmentedLog::open(dir.path()).unwrap();
         assert_eq!(replayed.len(), 1);
@@ -303,7 +327,8 @@ mod tests {
         {
             let (mut log, _) = SegmentedLog::open(dir.path()).unwrap();
             for i in 0u64..100 {
-                log.append(&entry(&format!("key.{i}"), i + 1, serde_json::json!(i))).unwrap();
+                log.append(&entry(&format!("key.{i}"), i + 1, serde_json::json!(i)))
+                    .unwrap();
             }
         }
         let (_log, replayed) = SegmentedLog::open(dir.path()).unwrap();
@@ -358,7 +383,8 @@ mod tests {
             let (mut log, _) = SegmentedLog::open(dir.path()).unwrap();
             // Fake the counter so rotate() triggers on the very next append.
             log.entry_count = MAX_ENTRIES_PER_SEGMENT;
-            log.append(&entry("trigger", 1, serde_json::json!("rotate"))).unwrap();
+            log.append(&entry("trigger", 1, serde_json::json!("rotate")))
+                .unwrap();
         }
 
         let segs = list_segments(dir.path()).unwrap();
@@ -380,23 +406,28 @@ mod tests {
         // Write enough to trigger 4 segments (above MAX_SEGMENTS_BEFORE_COMPACT=3).
         let total = (MAX_ENTRIES_PER_SEGMENT * 3 + 1) as u64;
         for i in 0..total {
-            log.append(&entry(&format!("k{i}"), i + 1, serde_json::json!(i))).unwrap();
+            log.append(&entry(&format!("k{i}"), i + 1, serde_json::json!(i)))
+                .unwrap();
         }
 
         // Build a snapshot of last-write-wins for each key (all distinct here).
         let snapshot: Vec<LogEntry> = (0..total)
             .map(|i| LogEntry {
                 version: i + 1,
-                key:     format!("k{i}"),
-                ops:     vec![],                    // snapshot entry
-                value:   serde_json::json!(i),
+                key: format!("k{i}"),
+                ops: vec![], // snapshot entry
+                value: serde_json::json!(i),
             })
             .collect();
 
         log.compact(&snapshot).unwrap();
 
         let segs_after = list_segments(dir.path()).unwrap();
-        assert_eq!(segs_after.len(), 2, "compact leaves snapshot + live segment");
+        assert_eq!(
+            segs_after.len(),
+            2,
+            "compact leaves snapshot + live segment"
+        );
 
         // Replay gives back snapshot entries.
         let (_log, replayed) = SegmentedLog::open(dir.path()).unwrap();
@@ -410,15 +441,15 @@ mod tests {
         let dir = tmp();
         {
             let store = crate::state::StateStore::open(dir.path()).unwrap();
-            store.apply("game.score",  serde_json::json!({"score": 42}));
+            store.apply("game.score", serde_json::json!({"score": 42}));
             store.apply("game.player", serde_json::json!({"name": "Alice"}));
-            store.apply("game.score",  serde_json::json!({"score": 99})); // overwrite
+            store.apply("game.score", serde_json::json!({"score": 99})); // overwrite
         }
         // Reopen and verify last-write-wins reconstruction.
         let store = crate::state::StateStore::open(dir.path()).unwrap();
-        let score  = store.get("game.score").expect("score");
+        let score = store.get("game.score").expect("score");
         let player = store.get("game.player").expect("player");
-        assert_eq!(score.value,  serde_json::json!({"score": 99}));
+        assert_eq!(score.value, serde_json::json!({"score": 99}));
         assert_eq!(player.value, serde_json::json!({"name": "Alice"}));
     }
 

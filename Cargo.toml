@@ -16,9 +16,6 @@ name = "bench"
 path = "src/bin/bench.rs"
 required-features = ["bench"]
 
-[[bin]]
-name = "load-test"
-path = "src/bin/load_test.rs"
 
 [lib]
 name = "sodp"

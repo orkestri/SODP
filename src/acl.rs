@@ -65,7 +65,6 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::Value;
 
-
 /// Returns the default claim path mappings for a named IdP preset.
 ///
 /// Keys are the short names used in permission strings (`role`, `group`, etc.).
@@ -75,9 +74,9 @@ fn preset_mappings(name: &str) -> Option<HashMap<String, String>> {
         "keycloak" => &[
             // Keycloak: roles live inside realm_access.roles (nested object).
             // Groups and tenant_id are top-level claims added via protocol mapper.
-            ("role",   "realm_access.roles"),
-            ("group",  "groups"),
-            ("perm",   "permissions"),
+            ("role", "realm_access.roles"),
+            ("group", "groups"),
+            ("perm", "permissions"),
             ("tenant", "tenant_id"),
         ],
         "auth0" => &[
@@ -85,41 +84,45 @@ fn preset_mappings(name: &str) -> Option<HashMap<String, String>> {
             // Org/tenant uses the standard org_id claim (Auth0 Organizations).
             // For namespaced custom claims, override `role` in claim_mappings:
             //   "claim_mappings": { "role": "https://myapp.com/roles" }
-            ("role",   "roles"),
-            ("group",  "groups"),
-            ("perm",   "permissions"),
+            ("role", "roles"),
+            ("group", "groups"),
+            ("perm", "permissions"),
             ("tenant", "org_id"),
         ],
         "okta" => &[
             // Okta: groups claim carries both roles and group memberships.
             // Custom attributes are added via the profile editor and appear
             // as top-level claims.
-            ("role",   "groups"),
-            ("group",  "groups"),
-            ("perm",   "permissions"),
+            ("role", "groups"),
+            ("group", "groups"),
+            ("perm", "permissions"),
             ("tenant", "tenant_id"),
         ],
         "cognito" => &[
             // AWS Cognito: pool groups appear as cognito:groups.
             // Custom attributes use the custom: prefix.
-            ("role",   "cognito:groups"),
-            ("group",  "cognito:groups"),
-            ("perm",   "permissions"),
+            ("role", "cognito:groups"),
+            ("group", "cognito:groups"),
+            ("perm", "permissions"),
             ("tenant", "custom:tenant_id"),
         ],
         "generic" => &[
             // Simple flat JWT — roles, groups, permissions, tenant_id at the top level.
             // Good default for custom token issuers.
-            ("role",   "roles"),
-            ("group",  "groups"),
-            ("perm",   "permissions"),
+            ("role", "roles"),
+            ("group", "groups"),
+            ("perm", "permissions"),
             ("tenant", "tenant_id"),
         ],
         _ => return None,
     };
-    Some(entries.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+    Some(
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    )
 }
-
 
 #[derive(Deserialize)]
 struct AclFile {
@@ -140,18 +143,17 @@ struct AclFile {
 #[derive(Debug, Deserialize)]
 struct AclRule {
     /// Dot-separated key pattern with optional `{sub}` capture and `*` suffix wildcard.
-    key:   String,
+    key: String,
     /// Permission required to read (WATCH / RESUME) this key.
-    read:  String,
+    read: String,
     /// Permission required to write (any CALL method) this key.
     write: String,
 }
 
-
 /// Loaded and compiled ACL rule set.
 #[derive(Debug)]
 pub struct AclRegistry {
-    rules:    Vec<AclRule>,
+    rules: Vec<AclRule>,
     /// Resolved claim path mappings (preset + overrides).
     mappings: HashMap<String, String>,
 }
@@ -184,7 +186,10 @@ impl AclRegistry {
         // 2. Apply explicit overrides / additions on top.
         mappings.extend(file.claim_mappings);
 
-        Ok(AclRegistry { rules: file.rules, mappings })
+        Ok(AclRegistry {
+            rules: file.rules,
+            mappings,
+        })
     }
 
     /// Returns `true` if `sub` may read `key` (WATCH / RESUME).
@@ -208,7 +213,6 @@ impl AclRegistry {
     }
 }
 
-
 /// Match `pattern` against `key`.
 ///
 /// Returns:
@@ -230,13 +234,17 @@ fn match_pattern(pattern: &str, key: &str) -> Option<Option<String>> {
                 return if ki < key.len() { Some(captured) } else { None };
             }
             "{sub}" => {
-                if ki >= key.len() { return None; }
+                if ki >= key.len() {
+                    return None;
+                }
                 captured = Some(key[ki].to_string());
                 pi += 1;
                 ki += 1;
             }
             literal => {
-                if ki >= key.len() || key[ki] != literal { return None; }
+                if ki >= key.len() || key[ki] != literal {
+                    return None;
+                }
                 pi += 1;
                 ki += 1;
             }
@@ -244,9 +252,12 @@ fn match_pattern(pattern: &str, key: &str) -> Option<Option<String>> {
     }
 
     // Pattern exhausted — key must also be fully consumed (no trailing segments).
-    if ki == key.len() { Some(captured) } else { None }
+    if ki == key.len() {
+        Some(captured)
+    } else {
+        None
+    }
 }
-
 
 /// Resolve a claim path into the JWT claims value.
 ///
@@ -274,30 +285,31 @@ fn resolve_claim<'a>(claims: &'a Value, path: &str) -> Option<&'a Value> {
     Some(current)
 }
 
-
 fn check_permission(
-    perm:     &str,
-    sub:      Option<&str>,
+    perm: &str,
+    sub: Option<&str>,
     captured: Option<&str>,
-    claims:   &Value,
+    claims: &Value,
     mappings: &HashMap<String, String>,
 ) -> bool {
     match perm {
-        //  Built-in shortcuts 
+        //  Built-in shortcuts
         "*" => true,
 
         // Session's sub must equal the value captured from the key pattern.
         "{sub}" => sub.is_some() && sub == captured,
 
-        //  Claim-based: "KEY:VALUE" 
+        //  Claim-based: "KEY:VALUE"
         p if p.contains(':') => {
-            let (prefix, raw_value) = p.split_once(':').expect("colon guaranteed by contains check");
+            let (prefix, raw_value) = p
+                .split_once(':')
+                .expect("colon guaranteed by contains check");
 
             // `{sub}` in the value position is a backreference to the captured segment.
             let value: &str = if raw_value == "{sub}" {
                 match captured {
                     Some(c) => c,
-                    None    => return false,
+                    None => return false,
                 }
             } else {
                 raw_value
@@ -306,25 +318,22 @@ fn check_permission(
             // Look up the claim path registered for this prefix.
             let claim_path = match mappings.get(prefix) {
                 Some(p) => p.as_str(),
-                None    => return false,
+                None => return false,
             };
 
             match resolve_claim(claims, claim_path) {
                 // Array claim (roles, groups, permissions) — membership check.
-                Some(Value::Array(arr)) => {
-                    arr.iter().any(|item| item.as_str() == Some(value))
-                }
+                Some(Value::Array(arr)) => arr.iter().any(|item| item.as_str() == Some(value)),
                 // Scalar claim (tenant, org) — equality check.
                 Some(Value::String(s)) => s.as_str() == value,
                 _ => false,
             }
         }
 
-        //  Literal sub check 
+        //  Literal sub check
         literal => sub == Some(literal),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -334,16 +343,23 @@ mod tests {
     /// Build a registry directly from a JSON string (bypasses file I/O).
     fn registry(json_str: &str) -> AclRegistry {
         let file: AclFile = serde_json::from_str(json_str).unwrap();
-        let mut mappings = file.preset.as_deref()
+        let mut mappings = file
+            .preset
+            .as_deref()
             .and_then(preset_mappings)
             .unwrap_or_default();
         mappings.extend(file.claim_mappings);
-        AclRegistry { rules: file.rules, mappings }
+        AclRegistry {
+            rules: file.rules,
+            mappings,
+        }
     }
 
-    fn no_claims() -> Value { json!({}) }
+    fn no_claims() -> Value {
+        json!({})
+    }
 
-    //  Pattern matching 
+    //  Pattern matching
 
     #[test]
     fn wildcard_star_is_suffix() {
@@ -369,7 +385,7 @@ mod tests {
         assert!(match_pattern("collab.doc", "collab.doc.extra").is_none());
     }
 
-    //  Basic ACL logic 
+    //  Basic ACL logic
 
     #[test]
     fn open_public() {
@@ -381,10 +397,12 @@ mod tests {
 
     #[test]
     fn sub_scoped_key() {
-        let acl = registry(r#"{"rules":[
+        let acl = registry(
+            r#"{"rules":[
             {"key":"user.{sub}.*","read":"{sub}","write":"{sub}"},
             {"key":"public.*",    "read":"*",     "write":"*"    }
-        ]}"#);
+        ]}"#,
+        );
         assert!(acl.can_read("user.alice.notes", Some("alice"), &no_claims()));
         assert!(!acl.can_read("user.alice.notes", Some("bob"), &no_claims()));
         assert!(acl.can_read("public.board", Some("bob"), &no_claims()));
@@ -400,24 +418,28 @@ mod tests {
 
     #[test]
     fn first_rule_wins() {
-        let acl = registry(r#"{"rules":[
+        let acl = registry(
+            r#"{"rules":[
             {"key":"*",       "read":"*",     "write":"*"    },
             {"key":"admin.*", "read":"admin", "write":"admin"}
-        ]}"#);
+        ]}"#,
+        );
         // The catch-all rule fires first → admin.x is readable by anyone.
         assert!(acl.can_read("admin.secret", Some("alice"), &no_claims()));
     }
 
-    //  Claim-based permissions 
+    //  Claim-based permissions
 
     #[test]
     fn role_check_keycloak() {
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "preset": "keycloak",
             "rules": [{"key":"admin.*","read":"role:admin","write":"role:admin"}]
-        }"#);
+        }"#,
+        );
         let admin_claims = json!({ "realm_access": { "roles": ["user", "admin"] } });
-        let user_claims  = json!({ "realm_access": { "roles": ["user"] } });
+        let user_claims = json!({ "realm_access": { "roles": ["user"] } });
 
         assert!(acl.can_read("admin.config", Some("alice"), &admin_claims));
         assert!(!acl.can_read("admin.config", Some("alice"), &user_claims));
@@ -426,10 +448,12 @@ mod tests {
 
     #[test]
     fn group_check_generic() {
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "preset": "generic",
             "rules": [{"key":"editors.*","read":"group:editors","write":"group:editors"}]
-        }"#);
+        }"#,
+        );
         let editor = json!({ "groups": ["viewers", "editors"] });
         let viewer = json!({ "groups": ["viewers"] });
 
@@ -439,10 +463,12 @@ mod tests {
 
     #[test]
     fn tenant_scoped_key() {
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "preset": "generic",
             "rules": [{"key":"tenant.{sub}.*","read":"tenant:{sub}","write":"tenant:{sub}"}]
-        }"#);
+        }"#,
+        );
         let acme = json!({ "tenant_id": "acme" });
         let other = json!({ "tenant_id": "other-corp" });
 
@@ -454,35 +480,45 @@ mod tests {
     #[test]
     fn auth0_namespaced_claim_override() {
         // Auth0 custom namespace — override the role mapping, rules stay the same.
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "preset": "auth0",
             "claim_mappings": { "role": "https://myapp.com/roles" },
             "rules": [{"key":"admin.*","read":"role:admin","write":"role:admin"}]
-        }"#);
+        }"#,
+        );
         let claims = json!({ "https://myapp.com/roles": ["admin", "user"] });
         assert!(acl.can_read("admin.config", Some("alice"), &claims));
         // Standard "roles" key no longer matches (overridden).
-        assert!(!acl.can_read("admin.config", Some("alice"), &json!({ "roles": ["admin"] })));
+        assert!(!acl.can_read(
+            "admin.config",
+            Some("alice"),
+            &json!({ "roles": ["admin"] })
+        ));
     }
 
     #[test]
     fn cognito_groups() {
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "preset": "cognito",
             "rules": [{"key":"admin.*","read":"role:Admins","write":"role:Admins"}]
-        }"#);
+        }"#,
+        );
         let claims = json!({ "cognito:groups": ["Admins", "Users"] });
         assert!(acl.can_read("admin.config", Some("alice"), &claims));
     }
 
     #[test]
     fn permission_claim_auth0() {
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "preset": "auth0",
             "rules": [
                 {"key":"docs.*","read":"perm:read:docs","write":"perm:write:docs"}
             ]
-        }"#);
+        }"#,
+        );
         let claims = json!({ "permissions": ["read:docs", "delete:posts"] });
         assert!(acl.can_read("docs.spec", Some("alice"), &claims));
         assert!(!acl.can_write("docs.spec", Some("alice"), &claims)); // no write:docs
@@ -491,12 +527,18 @@ mod tests {
     #[test]
     fn custom_claim_mapping() {
         // Add a wholly custom mapping key the developer defines themselves.
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "claim_mappings": { "dept": "department" },
             "rules": [{"key":"hr.*","read":"dept:HR","write":"dept:HR"}]
-        }"#);
+        }"#,
+        );
         assert!(acl.can_read("hr.records", Some("alice"), &json!({ "department": "HR" })));
-        assert!(!acl.can_read("hr.records", Some("bob"), &json!({ "department": "Engineering" })));
+        assert!(!acl.can_read(
+            "hr.records",
+            Some("bob"),
+            &json!({ "department": "Engineering" })
+        ));
     }
 
     #[test]
@@ -519,7 +561,8 @@ mod tests {
 
     #[test]
     fn keycloak_full_scenario() {
-        let acl = registry(r#"{
+        let acl = registry(
+            r#"{
             "preset": "keycloak",
             "rules": [
                 { "key": "public.*",          "read": "*",            "write": "*"            },
@@ -527,7 +570,8 @@ mod tests {
                 { "key": "admin.*",           "read": "role:admin",   "write": "role:admin"   },
                 { "key": "user.{sub}.*",      "read": "{sub}",        "write": "{sub}"        }
             ]
-        }"#);
+        }"#,
+        );
         let alice = json!({
             "realm_access": { "roles": ["user"] },
             "tenant_id": "acme"

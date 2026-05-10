@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use serde_json::Value;
+use std::sync::Arc;
 
 /// Outbound message on the per-connection write channel.
 ///
@@ -22,7 +22,7 @@ pub enum OutboundMsg {
 /// Produces bytes identical to `Frame { frame_type: DELTA, stream_id, seq, body }.encode()`.
 pub fn delta_bytes(stream_id: u32, seq: u64, body_mp: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(12 + body_mp.len());
-    buf.push(0x94);         // fixarray(4)
+    buf.push(0x94); // fixarray(4)
     buf.push(types::DELTA); // 0x04, positive fixint
     write_uint(&mut buf, stream_id as u64);
     write_uint(&mut buf, seq);
@@ -34,7 +34,10 @@ pub fn delta_bytes(stream_id: u32, seq: u64, body_mp: &[u8]) -> Vec<u8> {
 fn write_uint(buf: &mut Vec<u8>, v: u64) {
     match v {
         0x00..=0x7f => buf.push(v as u8),
-        0x80..=0xff => { buf.push(0xcc); buf.push(v as u8); }
+        0x80..=0xff => {
+            buf.push(0xcc);
+            buf.push(v as u8);
+        }
         0x100..=0xffff => {
             buf.push(0xcd);
             buf.push((v >> 8) as u8);
@@ -42,12 +45,16 @@ fn write_uint(buf: &mut Vec<u8>, v: u64) {
         }
         0x10000..=0xffff_ffff => {
             buf.push(0xce);
-            buf.push((v >> 24) as u8); buf.push((v >> 16) as u8);
-            buf.push((v >> 8) as u8);  buf.push(v as u8);
+            buf.push((v >> 24) as u8);
+            buf.push((v >> 16) as u8);
+            buf.push((v >> 8) as u8);
+            buf.push(v as u8);
         }
         _ => {
             buf.push(0xcf);
-            for i in (0..8).rev() { buf.push((v >> (i * 8)) as u8); }
+            for i in (0..8).rev() {
+                buf.push((v >> (i * 8)) as u8);
+            }
         }
     }
 }
@@ -63,10 +70,10 @@ pub mod types {
     pub const ERROR: u8 = 0x07;
     pub const ACK: u8 = 0x08;
     pub const HEARTBEAT: u8 = 0x09;
-    pub const RESUME:    u8 = 0x0A;
-    pub const AUTH:      u8 = 0x0B;
-    pub const AUTH_OK:   u8 = 0x0C;
-    pub const UNWATCH:   u8 = 0x0D;
+    pub const RESUME: u8 = 0x0A;
+    pub const AUTH: u8 = 0x0B;
+    pub const AUTH_OK: u8 = 0x0C;
+    pub const UNWATCH: u8 = 0x0D;
 }
 
 /// A SODP wire frame.
@@ -93,7 +100,12 @@ impl Frame {
     pub fn decode(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         let (frame_type, stream_id, seq, body): (u8, u32, u64, Value) =
             rmp_serde::from_slice(bytes)?;
-        Ok(Frame { frame_type, stream_id, seq, body })
+        Ok(Frame {
+            frame_type,
+            stream_id,
+            seq,
+            body,
+        })
     }
 }
 
@@ -104,8 +116,8 @@ impl Frame {
 pub fn hello(auth: bool, capabilities: Value) -> Frame {
     Frame {
         frame_type: types::HELLO,
-        stream_id:  0,
-        seq:        0,
+        stream_id: 0,
+        seq: 0,
         body: serde_json::json!({
             "version": "0.1",
             "server": "SODP-RS",
@@ -120,13 +132,21 @@ pub fn hello(auth: bool, capabilities: Value) -> Frame {
 pub fn auth_ok(sub: &str) -> Frame {
     Frame {
         frame_type: types::AUTH_OK,
-        stream_id:  0,
-        seq:        0,
+        stream_id: 0,
+        seq: 0,
         body: serde_json::json!({ "sub": sub }),
     }
 }
 
-pub fn state_init(stream_id: u32, seq: u64, state_key: &str, version: u64, value: Value, initialized: bool, params: Option<Value>) -> Frame {
+pub fn state_init(
+    stream_id: u32,
+    seq: u64,
+    state_key: &str,
+    version: u64,
+    value: Value,
+    initialized: bool,
+    params: Option<Value>,
+) -> Frame {
     let mut body = serde_json::json!({
         "state":       state_key,
         "version":     version,

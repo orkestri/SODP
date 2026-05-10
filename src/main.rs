@@ -1,7 +1,10 @@
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::io::AsyncWriteExt;
@@ -20,9 +23,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let addr        = std::env::args().nth(1).unwrap_or_else(|| "0.0.0.0:7777".to_string());
+    let addr = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "0.0.0.0:7777".to_string());
     // Empty string treated as absent so `sodp-server addr "" schema.json` works.
-    let log_dir     = std::env::args().nth(2).filter(|s| !s.is_empty());
+    let log_dir = std::env::args().nth(2).filter(|s| !s.is_empty());
     let schema_file = std::env::args().nth(3).filter(|s| !s.is_empty());
 
     let mut server = match schema_file {
@@ -32,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
         )?,
         None => match log_dir {
             Some(ref dir) => SodpServer::new_persistent(std::path::Path::new(dir))?,
-            None          => SodpServer::new(),
+            None => SodpServer::new(),
         },
     };
 
@@ -47,13 +52,14 @@ async fn main() -> anyhow::Result<()> {
                     Ok(entries) => {
                         // Safe: no tasks spawned yet — only one Arc reference exists.
                         let mut inner = Arc::try_unwrap(server).unwrap_or_else(|_| {
-                            unreachable!("no tasks spawned yet — Arc must have exactly one reference")
+                            unreachable!(
+                                "no tasks spawned yet — Arc must have exactly one reference"
+                            )
                         });
                         inner.state.load_entries(entries);
-                        cluster.clone().spawn_subscriber(
-                            Arc::clone(&inner.fanout),
-                            shutdown.clone(),
-                        );
+                        cluster
+                            .clone()
+                            .spawn_subscriber(Arc::clone(&inner.fanout), shutdown.clone());
                         inner.cluster = Some(cluster);
                         server = Arc::new(inner);
                     }
@@ -66,24 +72,26 @@ async fn main() -> anyhow::Result<()> {
 
     // Health check server (SODP_HEALTH_PORT, e.g. 7778)
     if let Ok(port_str) = std::env::var("SODP_HEALTH_PORT")
-        && let Ok(port) = port_str.parse::<u16>() {
-            let connections = Arc::clone(&server.connections);
-            let token = shutdown.clone();
-            tokio::spawn(run_health_server(port, connections, token));
-        }
+        && let Ok(port) = port_str.parse::<u16>()
+    {
+        let connections = Arc::clone(&server.connections);
+        let token = shutdown.clone();
+        tokio::spawn(run_health_server(port, connections, token));
+    }
 
     // Prometheus metrics server (SODP_METRICS_PORT, e.g. 9090).
     // If unset, the metrics crate uses its built-in no-op recorder — zero overhead.
     if let Ok(port_str) = std::env::var("SODP_METRICS_PORT")
-        && let Ok(port) = port_str.parse::<u16>() {
-            match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
-                Ok(handle) => {
-                    info!("Prometheus metrics on 0.0.0.0:{port}");
-                    tokio::spawn(run_metrics_server(port, handle, shutdown.clone()));
-                }
-                Err(e) => error!("Failed to install Prometheus recorder: {e}"),
+        && let Ok(port) = port_str.parse::<u16>()
+    {
+        match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
+            Ok(handle) => {
+                info!("Prometheus metrics on 0.0.0.0:{port}");
+                tokio::spawn(run_metrics_server(port, handle, shutdown.clone()));
             }
+            Err(e) => error!("Failed to install Prometheus recorder: {e}"),
         }
+    }
 
     // Graceful shutdown on Ctrl-C or SIGTERM
     let token = shutdown.clone();
@@ -103,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
 async fn sigterm() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         let mut stream = signal(SignalKind::terminate()).expect("SIGTERM handler");
         stream.recv().await;
     }
@@ -118,8 +126,14 @@ async fn sigterm() {
 async fn run_health_server(port: u16, connections: Arc<AtomicUsize>, shutdown: CancellationToken) {
     let addr = format!("0.0.0.0:{port}");
     let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l)  => { info!("Health server listening on {addr}"); l }
-        Err(e) => { error!("Failed to bind health server on {addr}: {e}"); return; }
+        Ok(l) => {
+            info!("Health server listening on {addr}");
+            l
+        }
+        Err(e) => {
+            error!("Failed to bind health server on {addr}: {e}");
+            return;
+        }
     };
 
     loop {
@@ -154,8 +168,11 @@ async fn run_health_server(port: u16, connections: Arc<AtomicUsize>, shutdown: C
 async fn run_metrics_server(port: u16, handle: PrometheusHandle, shutdown: CancellationToken) {
     let addr = format!("0.0.0.0:{port}");
     let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l)  => l,
-        Err(e) => { error!("Failed to bind metrics server on {addr}: {e}"); return; }
+        Ok(l) => l,
+        Err(e) => {
+            error!("Failed to bind metrics server on {addr}: {e}");
+            return;
+        }
     };
 
     loop {

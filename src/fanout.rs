@@ -45,7 +45,9 @@ pub fn encode_delta_body(version: u64, ops: &[DeltaOp]) -> Vec<u8> {
 
 impl FanoutBus {
     pub fn new() -> Arc<Self> {
-        Arc::new(FanoutBus { subscriptions: DashMap::new() })
+        Arc::new(FanoutBus {
+            subscriptions: DashMap::new(),
+        })
     }
 
     pub fn subscribe(&self, state_key: String, sub: Subscriber) {
@@ -83,18 +85,20 @@ impl FanoutBus {
         body_mp: &[u8],
         exclude_session: Option<&str>,
     ) {
-        let snapshot: Vec<(u32, String, Arc<WriteHandle>)> =
-            match self.subscriptions.get(state_key) {
-                Some(subs) => subs
-                    .iter()
-                    .filter(|s| exclude_session.is_none_or(|ex| s.session_id != ex))
-                    .map(|s| (s.stream_id, s.session_id.clone(), Arc::clone(&s.write)))
-                    .collect(),
-                None => return,
-            };
+        let snapshot: Vec<(u32, String, Arc<WriteHandle>)> = match self.subscriptions.get(state_key)
+        {
+            Some(subs) => subs
+                .iter()
+                .filter(|s| exclude_session.is_none_or(|ex| s.session_id != ex))
+                .map(|s| (s.stream_id, s.session_id.clone(), Arc::clone(&s.write)))
+                .collect(),
+            None => return,
+        };
         // DashMap shard lock released here.
 
-        if snapshot.is_empty() { return; }
+        if snapshot.is_empty() {
+            return;
+        }
 
         // Wrap body_mp in Arc once — all subscribers share the bytes.
         let shared: Arc<[u8]> = Arc::from(body_mp);
@@ -102,7 +106,10 @@ impl FanoutBus {
         let mut slow_sessions: Vec<String> = Vec::new();
 
         for (stream_id, session_id, write) in snapshot {
-            if !write.send(OutboundMsg::ArcDelta { stream_id, body_mp: Arc::clone(&shared) }) {
+            if !write.send(OutboundMsg::ArcDelta {
+                stream_id,
+                body_mp: Arc::clone(&shared),
+            }) {
                 warn!("Slow consumer {session_id} — cancelling session");
                 slow_sessions.push(session_id);
             }
@@ -110,8 +117,9 @@ impl FanoutBus {
 
         // Remove slow subscribers from this key's subscription list.
         if !slow_sessions.is_empty()
-            && let Some(mut subs) = self.subscriptions.get_mut(state_key) {
-                subs.retain(|s| !slow_sessions.contains(&s.session_id));
+            && let Some(mut subs) = self.subscriptions.get_mut(state_key)
+        {
+            subs.retain(|s| !slow_sessions.contains(&s.session_id));
         }
     }
 
@@ -120,13 +128,20 @@ impl FanoutBus {
     /// Encodes the body internally; use `encode_delta_body` + `broadcast_encoded`
     /// directly when you also need the bytes for a same-session direct write.
     pub fn broadcast(&self, state_key: &str, version: u64, ops: &[DeltaOp]) {
-        if ops.is_empty() { return; }
+        if ops.is_empty() {
+            return;
+        }
         let body_mp = encode_delta_body(version, ops);
-        if body_mp.is_empty() { return; }
+        if body_mp.is_empty() {
+            return;
+        }
         self.broadcast_encoded(state_key, &body_mp, None);
     }
 
     pub fn subscriber_count(&self, state_key: &str) -> usize {
-        self.subscriptions.get(state_key).map(|s| s.len()).unwrap_or(0)
+        self.subscriptions
+            .get(state_key)
+            .map(|s| s.len())
+            .unwrap_or(0)
     }
 }
