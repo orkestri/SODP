@@ -9,8 +9,8 @@
   <a href="https://www.npmjs.com/package/@sodp/react">
     <img src="https://img.shields.io/npm/v/@sodp/react?label=%40sodp%2Freact&color=CB3837" alt="npm @sodp/react">
   </a>
-  <a href="https://pypi.org/project/sodp/">
-    <img src="https://img.shields.io/pypi/v/sodp?color=3776AB" alt="PyPI sodp">
+  <a href="https://pypi.org/project/sodp-client/">
+    <img src="https://img.shields.io/pypi/v/sodp-client?color=3776AB" alt="PyPI sodp-client">
   </a>
 </p>
 
