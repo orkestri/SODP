@@ -1,4 +1,4 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 

@@ -1,4 +1,4 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 /**
  * Metadata delivered alongside every state update.

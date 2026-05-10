@@ -1,4 +1,4 @@
-package io.sodp.client.delta;
+package site.orkestri.sodp.delta;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

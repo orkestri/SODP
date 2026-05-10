@@ -1,8 +1,8 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import io.sodp.client.internal.Frames;
-import io.sodp.client.internal.FrameTypes;
+import site.orkestri.sodp.internal.Frames;
+import site.orkestri.sodp.internal.FrameTypes;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;

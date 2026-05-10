@@ -1,4 +1,4 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 /**
  * Origin of a watch callback invocation.

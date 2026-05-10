@@ -1,8 +1,8 @@
-package io.sodp.client.internal;
+package site.orkestri.sodp.internal;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.sodp.client.WatchCallback;
+import site.orkestri.sodp.WatchCallback;
 
 /**
  * Pairs a typed {@link WatchCallback} with the {@link Class} used to
@@ -16,7 +16,7 @@ public record CallbackEntry<T>(Class<T> type, WatchCallback<T> callback, ObjectM
      * without conversion.
      */
     @SuppressWarnings("unchecked")
-    public void fire(JsonNode node, io.sodp.client.WatchMeta meta) {
+    public void fire(JsonNode node, site.orkestri.sodp.WatchMeta meta) {
         T value = type == JsonNode.class
                 ? (T) node
                 : mapper.convertValue(node, type);

@@ -1,13 +1,13 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.sodp.client.delta.DeltaApplier;
-import io.sodp.client.delta.DeltaOp;
-import io.sodp.client.internal.CallbackEntry;
-import io.sodp.client.internal.FrameTypes;
-import io.sodp.client.internal.Frames;
-import io.sodp.client.internal.WatchEntry;
+import site.orkestri.sodp.delta.DeltaApplier;
+import site.orkestri.sodp.delta.DeltaOp;
+import site.orkestri.sodp.internal.CallbackEntry;
+import site.orkestri.sodp.internal.FrameTypes;
+import site.orkestri.sodp.internal.Frames;
+import site.orkestri.sodp.internal.WatchEntry;
 
 import java.io.ByteArrayOutputStream;
 import java.net.URI;

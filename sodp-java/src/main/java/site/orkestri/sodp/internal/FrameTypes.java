@@ -1,4 +1,4 @@
-package io.sodp.client.internal;
+package site.orkestri.sodp.internal;
 
 /** SODP wire frame type codes. */
 public final class FrameTypes {

@@ -1,10 +1,10 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
-import io.sodp.client.delta.DeltaApplier;
-import io.sodp.client.delta.DeltaOp;
+import site.orkestri.sodp.delta.DeltaApplier;
+import site.orkestri.sodp.delta.DeltaOp;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

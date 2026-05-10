@@ -1,4 +1,4 @@
-package io.sodp.client.delta;
+package site.orkestri.sodp.delta;
 
 /**
  * One structural change in a SODP {@code DELTA} frame.

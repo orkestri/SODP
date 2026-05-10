@@ -1,4 +1,4 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 /**
  * Called whenever the value of a watched state key changes.

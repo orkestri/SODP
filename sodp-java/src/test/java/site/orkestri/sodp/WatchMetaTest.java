@@ -1,4 +1,4 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 import org.junit.jupiter.api.Test;
 

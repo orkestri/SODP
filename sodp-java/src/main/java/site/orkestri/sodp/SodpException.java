@@ -1,4 +1,4 @@
-package io.sodp.client;
+package site.orkestri.sodp;
 
 /**
  * Thrown (or used as a {@link java.util.concurrent.CompletableFuture} failure cause)
