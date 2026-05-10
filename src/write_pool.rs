@@ -76,13 +76,12 @@ impl WriteHandle {
     }
 
     fn pool_enqueue(self: &Arc<Self>) {
-        if let Inner::Pool(p) = &self.inner {
-            if p.in_pool
+        if let Inner::Pool(p) = &self.inner
+            && p.in_pool
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
-            {
-                let _ = p.pool_queue_tx.send(Arc::clone(self));
-            }
+        {
+            let _ = p.pool_queue_tx.send(Arc::clone(self));
         }
     }
 }
@@ -99,17 +98,17 @@ async fn write_task(
             msg = rx.recv() => match msg { Some(m) => m, None => break },
             _ = cancel.cancelled() => break,
         };
-        if let Some(wm) = to_ws_msg(msg) {
-            if ws.feed(wm).await.is_err() {
-                break;
-            }
+        if let Some(wm) = to_ws_msg(msg)
+            && ws.feed(wm).await.is_err()
+        {
+            break;
         }
         // Coalesce: drain any queued messages before flushing.
         while let Ok(m) = rx.try_recv() {
-            if let Some(wm) = to_ws_msg(m) {
-                if ws.feed(wm).await.is_err() {
-                    break;
-                }
+            if let Some(wm) = to_ws_msg(m)
+                && ws.feed(wm).await.is_err()
+            {
+                break;
             }
         }
         if ws.flush().await.is_err() {
@@ -177,10 +176,10 @@ async fn pool_drain(handle: &Arc<WriteHandle>) {
 
         while let Ok(msg) = rx.try_recv() {
             p.pending.fetch_sub(1, Ordering::AcqRel);
-            if let Some(m) = to_ws_msg(msg) {
-                if ws.feed(m).await.is_err() {
-                    break;
-                }
+            if let Some(m) = to_ws_msg(msg)
+                && ws.feed(m).await.is_err()
+            {
+                break;
             }
         }
         let _ = ws.flush().await;
