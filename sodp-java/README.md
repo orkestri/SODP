@@ -1,6 +1,6 @@
 # sodp-client — Java
 
-[![Maven Central](https://img.shields.io/maven-central/v/site.orkesri/sodp-client)](https://central.sonatype.com/artifact/site.orkesri/sodp-client)
+[![Maven Central](https://img.shields.io/maven-central/v/site.orkestri/sodp-client)](https://central.sonatype.com/artifact/site.orkestri/sodp-client)
 [![Java](https://img.shields.io/badge/java-17%2B-blue)](https://adoptium.net/)
 [![license](https://img.shields.io/github/license/orkestri/SODP)](https://github.com/orkestri/SODP/blob/main/LICENSE)
 
@@ -18,7 +18,7 @@ Instead of polling or request/response, SODP streams every change as a minimal d
 
 ```xml
 <dependency>
-    <groupId>site.orkesri</groupId>
+    <groupId>site.orkestri</groupId>
     <artifactId>sodp-client</artifactId>
     <version>0.2.1</version>
 </dependency>
@@ -27,7 +27,7 @@ Instead of polling or request/response, SODP streams every change as a minimal d
 ### Gradle
 
 ```groovy
-implementation 'site.orkesri:sodp-client:0.2.1'
+implementation 'site.orkestri:sodp-client:0.2.1'
 ```
 
 ---
