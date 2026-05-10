@@ -12,6 +12,9 @@
   <a href="https://pypi.org/project/sodp-client/">
     <img src="https://img.shields.io/pypi/v/sodp-client?color=3776AB" alt="PyPI sodp-client">
   </a>
+  <a href="https://central.sonatype.com/artifact/site.orkestri/sodp-client">
+    <img src="https://img.shields.io/maven-central/v/site.orkestri/sodp-client?color=C71A36" alt="Maven Central sodp-client">
+  </a>
 </p>
 
 <h1 align="center">SODP — State-Oriented Data Protocol</h1>
