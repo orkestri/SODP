@@ -68,3 +68,29 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ── @sodp/server ──────────────────────────────────────────────────────
+      - name: Install @sodp/server deps
+        working-directory: server-ts
+        run: npm ci
+
+      - name: Test @sodp/server
+        working-directory: server-ts
+        run: npm test
+
+      - name: Build @sodp/server
+        working-directory: server-ts
+        run: npm run build
+
+      - name: Publish @sodp/server
+        working-directory: server-ts
+        run: |
+          set -e
+          version=$(node -p "require('./package.json').version")
+          if npm view "@sodp/server@${version}" version > /dev/null 2>&1; then
+            echo "@sodp/server@${version} is already on npm — skipping publish."
+          else
+            npm publish
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

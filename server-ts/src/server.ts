@@ -76,6 +76,9 @@ export interface SodpServerOptions {
   backpressureLimit?: number
   rateLimitWrites?: number
   rateLimitWatches?: number
+  // Maximum incoming WebSocket frame size in bytes. Default: 1 MiB.
+  // Clients exceeding this are disconnected immediately.
+  maxPayload?: number
 
   // ── Persistence ───────────────────────────────────────────────────────────
   // Directory for state snapshots. Written asynchronously (100ms debounce).
@@ -112,6 +115,7 @@ export class SodpServer {
     backpressureLimit: number
     rateLimitWrites: number
     rateLimitWatches: number
+    maxPayload: number
     serverName: string
   }
   private readonly resolvedAuthenticate: (token: string) => Promise<SodpClaims | null>
@@ -129,6 +133,7 @@ export class SodpServer {
       backpressureLimit: options.backpressureLimit ?? parseInt(process.env['SODP_BACKPRESSURE_LIMIT'] ?? '1024', 10),
       rateLimitWrites:   options.rateLimitWrites   ?? parseInt(process.env['SODP_RATE_WRITES_PER_SEC'] ?? '50', 10),
       rateLimitWatches:  options.rateLimitWatches  ?? parseInt(process.env['SODP_RATE_WATCHES_PER_SEC'] ?? '10', 10),
+      maxPayload:        options.maxPayload        ?? parseInt(process.env['SODP_MAX_PAYLOAD'] ?? String(1 * 1024 * 1024), 10),
       serverName: options.serverName ?? 'sodp-server-ts',
     }
 
@@ -216,12 +221,12 @@ export class SodpServer {
   // ── Transport ─────────────────────────────────────────────────────────────
 
   attach(server: http.Server | https.Server, opts?: { path?: string }): void {
-    this.wss = new WebSocketServer({ server, path: opts?.path ?? '/sodp' })
+    this.wss = new WebSocketServer({ server, path: opts?.path ?? '/sodp', maxPayload: this.opts.maxPayload })
     this.wss.on('connection', (ws, req) => this.handleConnection(ws, req.socket.remoteAddress ?? 'unknown'))
   }
 
   async listen(port: number, host = '0.0.0.0'): Promise<void> {
-    this.wss = new WebSocketServer({ port, host })
+    this.wss = new WebSocketServer({ port, host, maxPayload: this.opts.maxPayload })
     this.wss.on('connection', (ws, req) => this.handleConnection(ws, req.socket.remoteAddress ?? 'unknown'))
     await new Promise<void>((resolve) => this.wss!.on('listening', resolve))
   }

@@ -31,6 +31,9 @@
     "websocket",
     "server"
   ],
+  "engines": {
+    "node": ">=16"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
