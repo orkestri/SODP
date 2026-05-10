@@ -15,7 +15,7 @@ Instead of polling or request/response, SODP streams every change as a minimal d
 ## Install
 
 ```bash
-pip install sodp
+pip install sodp-client
 ```
 
 Requires **Python 3.11+** and a running asyncio event loop.

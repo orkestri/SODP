@@ -149,7 +149,7 @@ http.ListenAndServe(":7777", nil)
 |---|---|---|
 | [`@sodp/client`](client-ts/) | `npm i @sodp/client` | TypeScript / JavaScript |
 | [`@sodp/react`](react-sodp/) | `npm i @sodp/react` | React hooks |
-| [`sodp`](sodp-py/) | `pip install sodp` | Python |
+| [`sodp-client`](sodp-py/) | `pip install sodp-client-client` | Python |
 | [`io.sodp:sodp-client`](sodp-java/) | see below | Java 17+ |
 
 ### TypeScript / JavaScript
@@ -204,7 +204,7 @@ function Scoreboard() {
 ### Python
 
 ```bash
-pip install sodp
+pip install sodp-client
 ```
 
 ```python

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sodp"
+name = "sodp-client"
 version = "0.2.1"
 description = "Python client for the State-Oriented Data Protocol"
 license = { text = "MIT" }
