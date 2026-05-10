@@ -1,4 +1,4 @@
-name: Release — Python (PyPI)
+name: Release — Python
 
 on:
   push:
@@ -6,14 +6,12 @@ on:
       - "py/v*"
 
 jobs:
-  build-publish:
-    name: Build and publish sodp to PyPI
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    # This environment must be configured in GitHub repo Settings → Environments
-    # and linked as a Trusted Publisher on pypi.org — no API token needed.
-    environment: pypi
-    permissions:
-      id-token: write  # required for OIDC trusted publishing
+    defaults:
+      run:
+        working-directory: sodp-py
 
     steps:
       - uses: actions/checkout@v4
@@ -22,14 +20,81 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build tool
-        run: pip install build
+      - run: pip install -e ".[dev]"
+      - run: pytest
 
-      - name: Build distribution
+  build:
+    name: Build distribution
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install build
+      - name: Build wheel and sdist
         working-directory: sodp-py
         run: python -m build
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: actions/upload-artifact@v4
         with:
-          packages-dir: sodp-py/dist/
+          name: dist
+          path: sodp-py/dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for OIDC trusted publishing
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    name: Create GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#py/}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --include-path "sodp-py/**" --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Python ${{ steps.version.outputs.version }}" \
+            --notes-file RELEASE_NOTES.md \
+            dist/*
