@@ -75,7 +75,6 @@ jobs:
           args: --latest --include-path "sodp-go/**" --strip header
         env:
           OUTPUT: RELEASE_NOTES.md
-          GITHUB_REPO: ${{ github.repository }}
 
       - name: Create GitHub release
         env:

@@ -5,7 +5,7 @@ body = """
 ### {{ group | upper_first }}
 {% for commit in commits %}\
 - {{ commit.message | upper_first }}\
-{% if commit.breaking %} ⚠ **BREAKING CHANGE**{% endif %} ([`{{ commit.id | truncate(length=7, end="") }}`]({{ "https://github.com/" ~ env.GITHUB_REPO ~ "/commit/" ~ commit.id }}))
+{% if commit.breaking %} BREAKING CHANGE{% endif %} ([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/orkestri/SODP/commit/{{ commit.id }}))
 {% endfor %}
 {% endfor %}\
 """
