@@ -1,13 +1,13 @@
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
 };
 
 use dashmap::DashMap;
 use serde_json::Value;
 
-use crate::delta::{diff, DeltaOp};
+use crate::delta::{DeltaOp, diff};
 use crate::log::{LogEntry, SegmentedLog};
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,9 @@ struct DeltaLog {
 
 impl DeltaLog {
     fn new() -> Self {
-        DeltaLog { entries: DashMap::new() }
+        DeltaLog {
+            entries: DashMap::new(),
+        }
     }
 
     fn append(&self, key: &str, version: u64, ops: Vec<DeltaOp>) {
@@ -78,20 +80,20 @@ impl DeltaLog {
 ///   4. Appends any non-empty ops to the per-key delta log.
 ///   5. Returns `(new_version, delta_ops)` for fanout.
 pub struct StateStore {
-    entries:        DashMap<String, StateEntry>,
+    entries: DashMap<String, StateEntry>,
     global_version: AtomicU64,
-    log:            DeltaLog,
+    log: DeltaLog,
     /// On-disk persistent log.  `None` in ephemeral (in-memory-only) mode.
-    plog:           Option<Mutex<SegmentedLog>>,
+    plog: Option<Mutex<SegmentedLog>>,
 }
 
 impl StateStore {
     pub fn new() -> Arc<Self> {
         Arc::new(StateStore {
-            entries:        DashMap::new(),
+            entries: DashMap::new(),
             global_version: AtomicU64::new(0),
-            log:            DeltaLog::new(),
-            plog:           None,
+            log: DeltaLog::new(),
+            plog: None,
         })
     }
 
@@ -108,16 +110,19 @@ impl StateStore {
         // have a partial record from a crash; sorting is a cheap safety net.
         all_entries.sort_unstable_by_key(|e| e.version);
 
-        let entries        = DashMap::new();
-        let delta_log      = DeltaLog::new();
-        let max_version    = all_entries.last().map(|e| e.version).unwrap_or(0);
+        let entries = DashMap::new();
+        let delta_log = DeltaLog::new();
+        let max_version = all_entries.last().map(|e| e.version).unwrap_or(0);
 
         for entry in all_entries {
             // Rebuild in-memory StateEntry (last write per key wins — already sorted).
-            entries.insert(entry.key.clone(), StateEntry {
-                version: entry.version,
-                value:   entry.value,
-            });
+            entries.insert(
+                entry.key.clone(),
+                StateEntry {
+                    version: entry.version,
+                    value: entry.value,
+                },
+            );
             // Rebuild per-key delta log for RESUME replay.
             if !entry.ops.is_empty() {
                 delta_log.append(&entry.key, entry.version, entry.ops);
@@ -127,8 +132,8 @@ impl StateStore {
         Ok(Arc::new(StateStore {
             entries,
             global_version: AtomicU64::new(max_version),
-            log:            delta_log,
-            plog:           Some(Mutex::new(plog)),
+            log: delta_log,
+            plog: Some(Mutex::new(plog)),
         }))
     }
 
@@ -154,7 +159,13 @@ impl StateStore {
             None => vec![DeltaOp::add("/", new_value.clone())],
         };
 
-        self.entries.insert(key.to_string(), StateEntry { version, value: new_value.clone() });
+        self.entries.insert(
+            key.to_string(),
+            StateEntry {
+                version,
+                value: new_value.clone(),
+            },
+        );
 
         // Persist non-empty deltas to the in-memory log (always) and to the
         // on-disk segmented log when running in persistent mode.
@@ -162,7 +173,12 @@ impl StateStore {
             self.log.append(key, version, ops.clone());
 
             if let Some(plog) = &self.plog {
-                let log_entry = LogEntry { version, key: key.to_string(), ops: ops.clone(), value: new_value };
+                let log_entry = LogEntry {
+                    version,
+                    key: key.to_string(),
+                    ops: ops.clone(),
+                    value: new_value,
+                };
                 let needs_compact = {
                     let mut guard = plog.lock().expect("persistent log mutex poisoned");
                     if let Err(e) = guard.append(&log_entry) {
@@ -193,8 +209,8 @@ impl StateStore {
         if let Some(plog) = &self.plog {
             let log_entry = LogEntry {
                 version,
-                key:   key.to_string(),
-                ops:   ops.clone(),
+                key: key.to_string(),
+                ops: ops.clone(),
                 value: Value::Null,
             };
             let needs_compact = {
@@ -255,17 +271,22 @@ impl StateStore {
 
         // Build one LogEntry per live key.  ops = [] marks these as snapshot
         // entries — no DeltaLog population on replay.
-        let snapshot: Vec<LogEntry> = self.entries
+        let snapshot: Vec<LogEntry> = self
+            .entries
             .iter()
             .map(|e| LogEntry {
                 version: e.version,
-                key:     e.key().clone(),
-                ops:     vec![],
-                value:   e.value.clone(),
+                key: e.key().clone(),
+                ops: vec![],
+                value: e.value.clone(),
             })
             .collect();
 
-        if let Err(e) = plog.lock().expect("persistent log mutex poisoned").compact(&snapshot) {
+        if let Err(e) = plog
+            .lock()
+            .expect("persistent log mutex poisoned")
+            .compact(&snapshot)
+        {
             tracing::error!("Log compaction failed: {e}");
         }
     }
