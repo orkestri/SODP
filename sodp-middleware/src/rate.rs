@@ -24,14 +24,18 @@ use std::time::Instant;
 #[derive(Debug)]
 pub struct RateLimiter {
     max_per_sec: u32,
-    count:       u32,
-    window:      Instant,
+    count: u32,
+    window: Instant,
 }
 
 impl RateLimiter {
     /// Create a limiter allowing at most `max_per_sec` operations per second.
     pub fn new(max_per_sec: u32) -> Self {
-        RateLimiter { max_per_sec, count: 0, window: Instant::now() }
+        RateLimiter {
+            max_per_sec,
+            count: 0,
+            window: Instant::now(),
+        }
     }
 
     /// Returns `true` if the operation is within budget, `false` if it should
@@ -39,7 +43,7 @@ impl RateLimiter {
     pub fn allow(&mut self) -> bool {
         if self.window.elapsed().as_secs() >= 1 {
             self.window = Instant::now();
-            self.count  = 0;
+            self.count = 0;
         }
         self.count += 1;
         self.count <= self.max_per_sec

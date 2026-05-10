@@ -20,24 +20,24 @@ pub enum SchemaNode {
         #[serde(rename = "type")]
         type_name: String,
         #[serde(default)]
-        nullable:  bool,
+        nullable: bool,
         #[serde(default)]
-        fields:    HashMap<String, SchemaNode>,
+        fields: HashMap<String, SchemaNode>,
     },
 }
 
 impl SchemaNode {
     fn type_name(&self) -> &str {
         match self {
-            SchemaNode::Simple(t)          => t,
+            SchemaNode::Simple(t) => t,
             SchemaNode::Full { type_name, .. } => type_name,
         }
     }
 
     fn nullable(&self) -> bool {
         match self {
-            SchemaNode::Simple(_)              => false,
-            SchemaNode::Full { nullable, .. }  => *nullable,
+            SchemaNode::Simple(_) => false,
+            SchemaNode::Full { nullable, .. } => *nullable,
         }
     }
 
@@ -66,30 +66,45 @@ fn validate_node(value: &Value, node: &SchemaNode, path: &str) -> Result<(), Str
         "Any" => Ok(()),
 
         "String" => {
-            if value.is_string() { Ok(()) }
-            else { Err(format!("{path}: expected String, got {}", kind(value))) }
+            if value.is_string() {
+                Ok(())
+            } else {
+                Err(format!("{path}: expected String, got {}", kind(value)))
+            }
         }
 
         "Int" => {
             // Allow only integers (no fractional floats).
-            if value.is_i64() || value.is_u64() { Ok(()) }
-            else { Err(format!("{path}: expected Int, got {}", kind(value))) }
+            if value.is_i64() || value.is_u64() {
+                Ok(())
+            } else {
+                Err(format!("{path}: expected Int, got {}", kind(value)))
+            }
         }
 
         "Float" => {
             // Widening: integers are valid Floats.
-            if value.is_number() { Ok(()) }
-            else { Err(format!("{path}: expected Float, got {}", kind(value))) }
+            if value.is_number() {
+                Ok(())
+            } else {
+                Err(format!("{path}: expected Float, got {}", kind(value)))
+            }
         }
 
         "Bool" => {
-            if value.is_boolean() { Ok(()) }
-            else { Err(format!("{path}: expected Bool, got {}", kind(value))) }
+            if value.is_boolean() {
+                Ok(())
+            } else {
+                Err(format!("{path}: expected Bool, got {}", kind(value)))
+            }
         }
 
         "Array" => {
-            if value.is_array() { Ok(()) }
-            else { Err(format!("{path}: expected Array, got {}", kind(value))) }
+            if value.is_array() {
+                Ok(())
+            } else {
+                Err(format!("{path}: expected Array, got {}", kind(value)))
+            }
         }
 
         "Object" => {
@@ -118,11 +133,17 @@ fn validate_node(value: &Value, node: &SchemaNode, path: &str) -> Result<(), Str
 /// Human-readable JSON value kind for error messages.
 fn kind(v: &Value) -> &'static str {
     match v {
-        Value::Null      => "null",
-        Value::Bool(_)   => "Bool",
-        Value::Number(n) => if n.is_f64() { "Float" } else { "Int" },
+        Value::Null => "null",
+        Value::Bool(_) => "Bool",
+        Value::Number(n) => {
+            if n.is_f64() {
+                "Float"
+            } else {
+                "Int"
+            }
+        }
         Value::String(_) => "String",
-        Value::Array(_)  => "Array",
+        Value::Array(_) => "Array",
         Value::Object(_) => "Object",
     }
 }
@@ -154,7 +175,7 @@ impl SchemaRegistry {
     /// always permitted (backwards-compatible with schema-less deployments).
     pub fn validate(&self, key: &str, value: &Value) -> Result<(), String> {
         match self.states.get(key) {
-            None       => Ok(()),   // no schema for this key — allow any value
+            None => Ok(()), // no schema for this key — allow any value
             Some(node) => validate_node(value, node, key),
         }
     }

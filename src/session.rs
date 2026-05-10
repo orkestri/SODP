@@ -1,7 +1,7 @@
+use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
-use serde_json::Value;
 
 // ── Watch entry ───────────────────────────────────────────────────────────────
 
@@ -9,9 +9,9 @@ use serde_json::Value;
 #[derive(Debug)]
 pub struct WatchEntry {
     pub state_key: String,
-    pub last_seq:  u64,
+    pub last_seq: u64,
     /// Opaque params attached to this subscription (echoed in STATE_INIT).
-    pub params:    Option<Value>,
+    pub params: Option<Value>,
 }
 
 // ── Presence entry ────────────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ pub struct WatchEntry {
 #[derive(Debug)]
 pub struct PresenceEntry {
     pub state_key: String,
-    pub path:      String,
+    pub path: String,
 }
 
 // ── Rate limiter ──────────────────────────────────────────────────────────────
@@ -35,20 +35,24 @@ pub struct PresenceEntry {
 /// window boundary, which is acceptable for SODP's write/watch paths.
 #[derive(Debug)]
 pub struct RateLimiter {
-    max_per_sec:  u32,
-    count:        u32,
+    max_per_sec: u32,
+    count: u32,
     window_start: Instant,
 }
 
 impl RateLimiter {
     pub fn new(max_per_sec: u32) -> Self {
-        RateLimiter { max_per_sec, count: 0, window_start: Instant::now() }
+        RateLimiter {
+            max_per_sec,
+            count: 0,
+            window_start: Instant::now(),
+        }
     }
 
     /// Returns `true` if the request is within the rate limit; `false` to reject.
     pub fn allow(&mut self) -> bool {
         if self.window_start.elapsed().as_secs() >= 1 {
-            self.count        = 0;
+            self.count = 0;
             self.window_start = Instant::now();
         }
         if self.count < self.max_per_sec {
@@ -65,7 +69,7 @@ impl RateLimiter {
 /// Per-connection session state. Lives entirely within one connection task — not shared.
 #[derive(Debug)]
 pub struct Session {
-    pub id:  String,
+    pub id: String,
     /// Authenticated subject (JWT `sub` claim). `None` in unauthenticated mode.
     pub sub: Option<String>,
     /// All extra JWT claims (everything except `sub` and `exp`).
@@ -81,7 +85,7 @@ pub struct Session {
     /// Watch / resume rate limiter.  `None` = unlimited.
     pub watch_limiter: Option<RateLimiter>,
     next_stream_id: u32,
-    seq_counter:    u64,
+    seq_counter: u64,
 }
 
 impl Session {
@@ -89,15 +93,15 @@ impl Session {
     /// Pass `None` for unlimited.
     pub fn new(write_limit: Option<u32>, watch_limit: Option<u32>) -> Self {
         Session {
-            id:             Uuid::new_v4().to_string(),
-            sub:            None,
-            claims:         Value::Object(serde_json::Map::new()),
-            watches:        HashMap::new(),
-            presence:       Vec::new(),
-            write_limiter:  write_limit.map(RateLimiter::new),
-            watch_limiter:  watch_limit.map(RateLimiter::new),
+            id: Uuid::new_v4().to_string(),
+            sub: None,
+            claims: Value::Object(serde_json::Map::new()),
+            watches: HashMap::new(),
+            presence: Vec::new(),
+            write_limiter: write_limit.map(RateLimiter::new),
+            watch_limiter: watch_limit.map(RateLimiter::new),
             next_stream_id: 10, // stream 1 is control; subscription streams start at 10
-            seq_counter:    0,
+            seq_counter: 0,
         }
     }
 
@@ -115,7 +119,14 @@ impl Session {
     }
 
     pub fn add_watch(&mut self, stream_id: u32, state_key: String, params: Option<Value>) {
-        self.watches.insert(stream_id, WatchEntry { state_key, last_seq: 0, params });
+        self.watches.insert(
+            stream_id,
+            WatchEntry {
+                state_key,
+                last_seq: 0,
+                params,
+            },
+        );
     }
 
     pub fn remove_watch(&mut self, stream_id: u32) -> Option<WatchEntry> {
@@ -130,12 +141,19 @@ impl Session {
 
     /// Return the stream_id for an active WATCH on `state_key`, or `None`.
     pub fn watch_stream_id(&self, state_key: &str) -> Option<u32> {
-        self.watches.iter().find(|(_, e)| e.state_key == state_key).map(|(id, _)| *id)
+        self.watches
+            .iter()
+            .find(|(_, e)| e.state_key == state_key)
+            .map(|(id, _)| *id)
     }
 
     /// Register a session-owned presence path.  Deduplicates by (state_key, path).
     pub fn add_presence(&mut self, state_key: String, path: String) {
-        if !self.presence.iter().any(|e| e.state_key == state_key && e.path == path) {
+        if !self
+            .presence
+            .iter()
+            .any(|e| e.state_key == state_key && e.path == path)
+        {
             self.presence.push(PresenceEntry { state_key, path });
         }
     }

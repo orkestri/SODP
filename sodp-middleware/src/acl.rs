@@ -41,8 +41,8 @@ struct RuleFile {
 
 #[derive(Debug, Deserialize)]
 struct RawRule {
-    key:   String,
-    read:  String,
+    key: String,
+    read: String,
     write: String,
 }
 
@@ -61,17 +61,19 @@ enum Permission {
 impl Permission {
     fn from_str(s: &str) -> Self {
         match s {
-            "*"     => Permission::Anyone,
+            "*" => Permission::Anyone,
             "{sub}" => Permission::MatchSub,
-            other   => Permission::Specific(other.to_string()),
+            other => Permission::Specific(other.to_string()),
         }
     }
 
     fn allows(&self, caller_sub: Option<&str>, key_sub: Option<&str>) -> bool {
-        let Some(caller) = caller_sub else { return false };
+        let Some(caller) = caller_sub else {
+            return false;
+        };
         match self {
-            Permission::Anyone          => true,
-            Permission::MatchSub        => Some(caller) == key_sub,
+            Permission::Anyone => true,
+            Permission::MatchSub => Some(caller) == key_sub,
             Permission::Specific(fixed) => caller == fixed,
         }
     }
@@ -80,8 +82,8 @@ impl Permission {
 #[derive(Debug, Clone)]
 struct AclRule {
     key_pattern: String,
-    read:        Permission,
-    write:       Permission,
+    read: Permission,
+    write: Permission,
 }
 
 // ── AclRegistry ──────────────────────────────────────────────────────────────
@@ -100,13 +102,17 @@ pub struct AclRegistry {
 impl AclRegistry {
     /// Load rules from a JSON file.
     pub fn from_file(path: &Path) -> anyhow::Result<Arc<Self>> {
-        let raw  = std::fs::read_to_string(path)?;
+        let raw = std::fs::read_to_string(path)?;
         let file: RuleFile = serde_json::from_str(&raw)?;
-        let rules = file.rules.into_iter().map(|r| AclRule {
-            key_pattern: r.key,
-            read:        Permission::from_str(&r.read),
-            write:       Permission::from_str(&r.write),
-        }).collect();
+        let rules = file
+            .rules
+            .into_iter()
+            .map(|r| AclRule {
+                key_pattern: r.key,
+                read: Permission::from_str(&r.read),
+                write: Permission::from_str(&r.write),
+            })
+            .collect();
         Ok(Arc::new(AclRegistry { rules }))
     }
 
@@ -138,8 +144,16 @@ fn pattern_match(key: &str, pattern: &str, sub: Option<&str>) -> Option<Option<S
     } else {
         pattern.to_string()
     };
-    let captured = if pattern.contains("{sub}") { sub.map(str::to_string) } else { None };
-    if glob_match(key, &expanded) { Some(captured) } else { None }
+    let captured = if pattern.contains("{sub}") {
+        sub.map(str::to_string)
+    } else {
+        None
+    };
+    if glob_match(key, &expanded) {
+        Some(captured)
+    } else {
+        None
+    }
 }
 
 fn glob_match(s: &str, pattern: &str) -> bool {
@@ -148,16 +162,22 @@ fn glob_match(s: &str, pattern: &str) -> bool {
     while let Some(&pc) = p_chars.peek() {
         if pc == '*' {
             p_chars.next();
-            if p_chars.peek().is_none() { return true; }
+            if p_chars.peek().is_none() {
+                return true;
+            }
             let rest_pattern: String = p_chars.collect();
             let rest_s: String = s_chars.collect();
             for i in 0..=rest_s.len() {
-                if glob_match(&rest_s[i..], &rest_pattern) { return true; }
+                if glob_match(&rest_s[i..], &rest_pattern) {
+                    return true;
+                }
             }
             return false;
         } else {
             match s_chars.next() {
-                Some(sc) if sc == pc => { p_chars.next(); }
+                Some(sc) if sc == pc => {
+                    p_chars.next();
+                }
                 _ => return false,
             }
         }

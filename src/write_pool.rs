@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use futures_util::SinkExt;
 use futures_util::stream::SplitSink;
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Mutex};
-use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
+use tokio::sync::{Mutex, mpsc};
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -21,18 +21,20 @@ pub struct WriteHandle {
 
 enum Inner {
     /// Per-session write task owns the sink; no locking, maximum parallelism.
-    Task { outbound_tx: mpsc::Sender<OutboundMsg> },
+    Task {
+        outbound_tx: mpsc::Sender<OutboundMsg>,
+    },
     /// Shared pool of workers drain per-session queues.
     Pool(Box<PoolFields>),
 }
 
 struct PoolFields {
-    outbound_tx:    mpsc::Sender<OutboundMsg>,
-    outbound_rx:    Mutex<mpsc::Receiver<OutboundMsg>>,
-    ws_tx:          Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>,
-    pool_queue_tx:  mpsc::UnboundedSender<Arc<WriteHandle>>,
-    in_pool:        AtomicBool,
-    pending:        AtomicUsize,
+    outbound_tx: mpsc::Sender<OutboundMsg>,
+    outbound_rx: Mutex<mpsc::Receiver<OutboundMsg>>,
+    ws_tx: Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>,
+    pool_queue_tx: mpsc::UnboundedSender<Arc<WriteHandle>>,
+    in_pool: AtomicBool,
+    pending: AtomicUsize,
 }
 
 impl WriteHandle {
@@ -53,12 +55,13 @@ impl WriteHandle {
     /// Enqueue a message for delivery. Returns `false` (and cancels the session) on overflow.
     pub fn send(self: &Arc<Self>, msg: OutboundMsg) -> bool {
         match &self.inner {
-            Inner::Task { outbound_tx } => {
-                match outbound_tx.try_send(msg) {
-                    Ok(()) => true,
-                    Err(_) => { self.cancel.cancel(); false }
+            Inner::Task { outbound_tx } => match outbound_tx.try_send(msg) {
+                Ok(()) => true,
+                Err(_) => {
+                    self.cancel.cancel();
+                    false
                 }
-            }
+            },
             Inner::Pool(p) => {
                 p.pending.fetch_add(1, Ordering::AcqRel);
                 if p.outbound_tx.try_send(msg).is_err() {
@@ -97,15 +100,21 @@ async fn write_task(
             _ = cancel.cancelled() => break,
         };
         if let Some(wm) = to_ws_msg(msg) {
-            if ws.feed(wm).await.is_err() { break; }
+            if ws.feed(wm).await.is_err() {
+                break;
+            }
         }
         // Coalesce: drain any queued messages before flushing.
         while let Ok(m) = rx.try_recv() {
             if let Some(wm) = to_ws_msg(m) {
-                if ws.feed(wm).await.is_err() { break; }
+                if ws.feed(wm).await.is_err() {
+                    break;
+                }
             }
         }
-        if ws.flush().await.is_err() { break; }
+        if ws.flush().await.is_err() {
+            break;
+        }
     }
     let _ = ws.close().await;
 }
@@ -129,7 +138,7 @@ impl WritePool {
                         let mut locked = rx.lock().await;
                         match locked.recv().await {
                             Some(h) => h,
-                            None    => break,
+                            None => break,
                         }
                     };
                     pool_drain(&handle).await;
@@ -151,11 +160,11 @@ impl WritePool {
             cancel,
             inner: Inner::Pool(Box::new(PoolFields {
                 outbound_tx,
-                outbound_rx:   Mutex::new(outbound_rx),
-                ws_tx:         Mutex::new(ws_tx),
+                outbound_rx: Mutex::new(outbound_rx),
+                ws_tx: Mutex::new(ws_tx),
                 pool_queue_tx: self.queue_tx.clone(),
-                in_pool:       AtomicBool::new(false),
-                pending:       AtomicUsize::new(0),
+                in_pool: AtomicBool::new(false),
+                pending: AtomicUsize::new(0),
             })),
         })
     }
@@ -169,7 +178,9 @@ async fn pool_drain(handle: &Arc<WriteHandle>) {
         while let Ok(msg) = rx.try_recv() {
             p.pending.fetch_sub(1, Ordering::AcqRel);
             if let Some(m) = to_ws_msg(msg) {
-                if ws.feed(m).await.is_err() { break; }
+                if ws.feed(m).await.is_err() {
+                    break;
+                }
             }
         }
         let _ = ws.flush().await;
@@ -215,10 +226,14 @@ impl WriteMode {
                 .unwrap_or(cores * 2)
                 .max(2);
             tracing::info!("Write mode: pool ({pool_size} workers)");
-            WriteMode { inner: WriteModeInner::Pool(WritePool::new(pool_size)) }
+            WriteMode {
+                inner: WriteModeInner::Pool(WritePool::new(pool_size)),
+            }
         } else {
             tracing::info!("Write mode: task (per-session)");
-            WriteMode { inner: WriteModeInner::Task }
+            WriteMode {
+                inner: WriteModeInner::Task,
+            }
         }
     }
 
@@ -229,7 +244,7 @@ impl WriteMode {
         cancel: CancellationToken,
     ) -> Arc<WriteHandle> {
         match &self.inner {
-            WriteModeInner::Task       => WriteHandle::new_task(ws_tx, backpressure, cancel),
+            WriteModeInner::Task => WriteHandle::new_task(ws_tx, backpressure, cancel),
             WriteModeInner::Pool(pool) => pool.new_handle(ws_tx, backpressure, cancel),
         }
     }
@@ -241,12 +256,16 @@ fn to_ws_msg(outbound: OutboundMsg) -> Option<Message> {
     match outbound {
         OutboundMsg::Frame(f) => match f.encode() {
             Ok(bytes) => Some(Message::Binary(bytes)),
-            Err(e)    => { warn!("Frame encode error: {e}"); None }
-        }
+            Err(e) => {
+                warn!("Frame encode error: {e}");
+                None
+            }
+        },
         OutboundMsg::Bytes(b) => Some(Message::Binary(b)),
-        OutboundMsg::ArcDelta { stream_id, body_mp } =>
-            Some(Message::Binary(frame::delta_bytes(stream_id, 0, &body_mp))),
-        OutboundMsg::Ping       => Some(Message::Ping(vec![])),
+        OutboundMsg::ArcDelta { stream_id, body_mp } => {
+            Some(Message::Binary(frame::delta_bytes(stream_id, 0, &body_mp)))
+        }
+        OutboundMsg::Ping => Some(Message::Ping(vec![])),
         OutboundMsg::Pong(data) => Some(Message::Pong(data)),
     }
 }
