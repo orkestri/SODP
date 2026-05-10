@@ -57,7 +57,7 @@ export class PersistenceManager {
     if (this.flushTimer) return // already scheduled
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
-      this.saveNow().catch(() => { /* non-fatal */ })
+      this.saveNow().catch((err) => { console.error('[sodp] persistence write failed:', err) })
     }, 100)
   }
 
@@ -89,7 +89,7 @@ export class PersistenceManager {
         snapshot[key] = { version: snap.version, value: snap.value }
       }
     }
-    try { writeFileSync(this.filePath, JSON.stringify(snapshot), 'utf-8') } catch { /* ignore */ }
+    try { writeFileSync(this.filePath, JSON.stringify(snapshot), 'utf-8') } catch (err) { console.error('[sodp] persistence flush failed:', err) }
   }
 
   stop(): void {
