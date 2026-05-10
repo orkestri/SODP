@@ -4,13 +4,13 @@
 
 | Component | Supported |
 |---|---|
-| Rust server (latest release) | ✅ |
-| Go server (latest release) | ✅ |
-| `@sodp/client` (latest) | ✅ |
-| `@sodp/react` (latest) | ✅ |
-| `sodp` Python (latest) | ✅ |
-| `io.sodp:sodp-client` (latest) | ✅ |
-| Any previous release | ❌ |
+| Rust server (latest release) | yes |
+| Go server (latest release) | yes |
+| `@sodp/client` (latest) | yes |
+| `@sodp/react` (latest) | yes |
+| `sodp` Python (latest) | yes |
+| `io.sodp:sodp-client` (latest) | yes |
+| Any previous release | no |
 
 Only the latest released version of each component receives security fixes. We recommend always running the latest release.
 
