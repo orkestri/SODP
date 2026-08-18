@@ -84,7 +84,7 @@ async def test_call_timeout():
     """Call to non-existent server should timeout."""
     client = SodpClient("ws://127.0.0.1:19999", reconnect=False)
     try:
-        with pytest.raises((TimeoutError, ConnectionError, asyncio.CancelledError)):
+        with pytest.raises((TimeoutError, asyncio.TimeoutError, ConnectionError, asyncio.CancelledError)):
             await asyncio.wait_for(
                 client.call("state.set", {"state": "x", "value": 1}),
                 timeout=2.0,

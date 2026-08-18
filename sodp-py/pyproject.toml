@@ -9,7 +9,7 @@ description = "Python client for the State-Oriented Data Protocol"
 license = { text = "MIT" }
 authors = [{ name = "Orkestri", email = "hello@orkestri.io" }]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 dependencies = [
     "websockets>=12",
     "msgpack>=1.0",
