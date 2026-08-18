@@ -7,7 +7,7 @@ import logging
 import random
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Union
 
 import msgpack
 import websockets
@@ -52,7 +52,7 @@ class WatchMeta:
     source:      str = "delta"
 
 
-WatchCallback = Callable[[Any, WatchMeta], None | Awaitable[None]]
+WatchCallback = Callable[[Any, WatchMeta], Union[None, Awaitable[None]]]
 
 
 @dataclass
