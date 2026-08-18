@@ -152,7 +152,7 @@ http.ListenAndServe(":7777", nil)
 |---|---|---|
 | [`@sodp/client`](client-ts/) | `npm i @sodp/client` | TypeScript / JavaScript |
 | [`@sodp/react`](react-sodp/) | `npm i @sodp/react` | React hooks |
-| [`sodp-client`](sodp-py/) | `pip install sodp-client-client` | Python |
+| [`sodp-client`](sodp-py/) | `pip install sodp-client` | Python |
 | [`site.orkestri:sodp-client`](sodp-java/) | see below | Java 17+ |
 
 ### TypeScript / JavaScript

@@ -1,7 +1,7 @@
 # sodp
 
-[![PyPI](https://img.shields.io/pypi/v/sodp)](https://pypi.org/project/sodp/)
-[![Python](https://img.shields.io/pypi/pyversions/sodp)](https://pypi.org/project/sodp/)
+[![PyPI](https://img.shields.io/pypi/v/sodp-client)](https://pypi.org/project/sodp-client/)
+[![Python](https://img.shields.io/pypi/pyversions/sodp-client)](https://pypi.org/project/sodp-client/)
 [![license](https://img.shields.io/github/license/orkestri/SODP)](https://github.com/orkestri/SODP/blob/main/LICENSE)
 
 Python asyncio client for the **State-Oriented Data Protocol (SODP)** — a WebSocket-based protocol for continuous state synchronization.

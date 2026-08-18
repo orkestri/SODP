@@ -1463,7 +1463,7 @@ Mutation: `state.set { "name": "Alice" }`
 | Server library | Go | [github.com/orkestri/sodp-go](https://github.com/orkestri/SODP/tree/master/sodp-go) |
 | Client SDK | TypeScript | [@sodp/client](https://www.npmjs.com/package/@sodp/client) |
 | React hooks | TypeScript | [@sodp/react](https://www.npmjs.com/package/@sodp/react) |
-| Client SDK | Python | [sodp](https://pypi.org/project/sodp/) |
+| Client SDK | Python | [sodp-client](https://pypi.org/project/sodp-client/) |
 | Client SDK | Java | io.sodp:sodp-client |
 
 ---

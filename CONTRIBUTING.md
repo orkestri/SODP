@@ -21,7 +21,7 @@ to set up a local development environment and submit changes.
 src/           Rust server source
 client-ts/     @sodp/client  (TypeScript)
 react-sodp/    @sodp/react   (React hooks)
-sodp-py/       sodp           (Python)
+sodp-py/       sodp-client     (Python)
 sodp-java/     io.sodp:sodp-client (Java)
 demo-collab/   Collaborative editor demo
 docs/          Protocol spec, guides, diagrams
