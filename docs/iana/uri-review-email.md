@@ -75,7 +75,7 @@ The specification and all implementations are publicly available:
   Specification:  https://github.com/orkestri/SODP/blob/master/SPECIFICATION.md
   Repository:     https://github.com/orkestri/SODP
   npm (TS):       https://www.npmjs.com/package/@sodp/client
-  PyPI (Python):  https://pypi.org/project/sodp/
+  PyPI (Python):  https://pypi.org/project/sodp-client/
 
 We welcome any feedback from the review list.
 
