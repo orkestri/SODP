@@ -130,9 +130,7 @@ public final class Frames {
             for (JsonNode child : node) packJsonNode(p, child);
         } else if (node.isObject()) {
             p.packMapHeader(node.size());
-            var it = node.fields();
-            while (it.hasNext()) {
-                var e = it.next();
+            for (var e : node.properties()) {
                 p.packString(e.getKey());
                 packJsonNode(p, e.getValue());
             }
