@@ -279,4 +279,3 @@ async def set_score(value: int):
     await client.set("game.score", {"value": value})
     return {"ok": True}
 ```
-
