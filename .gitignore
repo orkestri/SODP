@@ -6,6 +6,8 @@ client-ts/node_modules/
 client-ts/dist/
 react-sodp/node_modules/
 react-sodp/dist/
+server-ts/node_modules/
+server-ts/dist/
 
 # Python
 sodp-py/.venv/
